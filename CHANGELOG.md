@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-10-23
+
 - Keep Stop available during voice preprocessing and refresh the transcript as soon as it is stored.
 
 ## [0.1.5] - 2026-10-23
