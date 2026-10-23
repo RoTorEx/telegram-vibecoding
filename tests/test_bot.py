@@ -996,3 +996,34 @@ async def test_voice_download_target_retry_and_transcript_rendering(app, host):
         await runtime.download_voice({"voice": {"duration": 301}}, a["id"])
     with pytest.raises(ValueError, match="Video is not supported"):
         await runtime.download_image({"video": {}}, a["id"])
+
+
+async def test_stop_is_usable_while_voice_is_transcribing(app):
+    import asyncio
+
+    runtime, transport, engine, native = app
+    await command(app, "/start")
+    await click(app, "📍 Location")
+    await click(app, "1")
+    await click(app, "➕ New session")
+    sid = runtime.store.get("selected")
+    entered = asyncio.Event()
+
+    async def transcribe(path):
+        entered.set()
+        await asyncio.Event().wait()
+
+    async def download(file_id, destination):
+        destination.write(b"OggS-test")
+
+    engine.speech.transcribe = transcribe
+    runtime.bot.download = download
+    runtime.capture(update(3200, "", voice={"file_id": "test", "file_unique_id": "test", "duration": 3}))
+    await runtime.process_messages([runtime.store.one("SELECT * FROM inbox WHERE id=3200")])
+    await entered.wait()
+    await runtime.refresh_panel()
+    assert "Transcribing voice" in panel(transport).text
+    await click(app, "⏹ Stop")
+    assert engine.store.request("telegram:3200")["state"] == "cancelled"
+    assert engine.store.session(sid)["status"] == "interrupted"
+    assert not any(m == "turn/start" for m, p in native.calls)

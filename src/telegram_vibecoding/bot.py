@@ -635,6 +635,7 @@ class BotRuntime:
                         "user",
                         "message",
                         "reasoning_summary",
+                        "transcription",
                         "error",
                         "completed",
                         "question",

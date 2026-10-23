@@ -72,7 +72,9 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
         ),
         "previous_page": False,
         "next_page": False,
-        "can_stop": bool(session and session["turn_id"]),
+        "can_stop": bool(
+            session and (session["turn_id"] or session["status"] in {"connecting", "transcribing"})
+        ),
         "history_previous": False,
         "history_next": False,
         "question_rows": [],
