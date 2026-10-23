@@ -57,7 +57,10 @@ Production code talks only to the versioned Core API, never imports Core code.
 Integration tests use the sibling Core checkout; runtime packaging does not.
 Restarting/updating this container must not restart Core or native agent work.
 The accepted bot is @GardenSandbox_bot, displayed as Telegram Vibecoding.
-Local voice processing is tracked in the shared TASK.md. Video is out of scope.
+Voice recordings are downloaded privately and queued to Core for local speech
+recognition. Display the exact transcript as user input. One recording is limited
+to five minutes and 20 MB; stable downloads and captured targets survive retries.
+Video is out of scope.
 Additional hosts remain deferred. No subagents.
 
 ## Independent versioning

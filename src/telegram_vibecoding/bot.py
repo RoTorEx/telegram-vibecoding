@@ -458,9 +458,9 @@ class BotRuntime:
         elif message.get("document"):
             image = message["document"]
             if image.get("mime_type") not in {"image/jpeg", "image/png", "image/webp", "image/gif"}:
-                raise ValueError("MVP accepts text and JPEG, PNG, WebP or GIF images. Voice comes later.")
-        elif any(k in message for k in ["voice", "audio", "video", "sticker", "animation"]):
-            raise ValueError("MVP accepts text and images. Voice and other attachments come later.")
+                raise ValueError("Send text, voice or JPEG, PNG, WebP or GIF images.")
+        elif any(k in message for k in ["audio", "video", "sticker", "animation"]):
+            raise ValueError("Send text, images or voice recordings. Video is not supported.")
         if image is None:
             return None
         if image.get("file_size", 0) > 20_000_000:
@@ -500,6 +500,30 @@ class BotRuntime:
         temp.replace(dest)
         return str(dest)
 
+    async def download_voice(self, message: dict, sid: str) -> str | None:
+        voice = message.get("voice")
+        if not voice:
+            return None
+        if voice.get("duration", 0) > 300:
+            raise ValueError("Voice recordings are limited to five minutes.")
+        if voice.get("file_size", 0) > 20_000_000:
+            raise ValueError("Telegram cloud downloads support files up to 20 MB.")
+        folder = self.settings.data_dir / "uploads" / sid
+        folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+        dest = folder / (str(message["message_id"]) + ".voice")
+        if dest.exists():
+            return str(dest)
+        data = io.BytesIO()
+        await self.bot.download(voice["file_id"], destination=data)
+        raw = data.getvalue()
+        if not raw or len(raw) > 20_000_000:
+            raise ValueError("Voice recording is empty or exceeds 20 MB.")
+        temp = dest.with_suffix(".part")
+        temp.write_bytes(raw)
+        temp.chmod(0o600)
+        temp.replace(dest)
+        return str(dest)
+
     async def process_messages(self, rows: list[dict]):
         row = rows[0]
         bodies = [json.loads(r["body"]) for r in rows]
@@ -531,10 +555,15 @@ class BotRuntime:
                     payload = json.loads(row["payload"])
                 else:
                     images = []
+                    audio = []
                     for message in messages:
                         if image := await self.download_image(message, sid):
                             images.append(image)
+                        if voice := await self.download_voice(message, sid):
+                            audio.append(voice)
                     payload = {"request_id": rid, "session_id": sid, "text": text, "images": images}
+                    if audio:
+                        payload["audio"] = audio
                     self.store.prepare_request([r["id"] for r in rows], rid, payload)
                 await self.engine.call("/messages", payload)
                 if self.store.get("selected") == sid:

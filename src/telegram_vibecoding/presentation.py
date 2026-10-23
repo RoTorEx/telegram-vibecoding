@@ -21,7 +21,7 @@ def relative_age(value: float | None, now: float | None = None) -> str:
 def session_label(session: dict) -> str:
     if session["status"] == "waiting":
         marker = "❔"
-    elif session.get("turn_id") or session["status"] in {"connecting", "working"}:
+    elif session.get("turn_id") or session["status"] in {"connecting", "working", "transcribing"}:
         marker = "⏳"
     else:
         marker = "💬 " + relative_age(session.get("last_response"))
@@ -56,7 +56,11 @@ def activity_label(live: dict, effort: str, now: float | None = None) -> str:
     elapsed = max(0, int(clock - live.get("started", clock)))
     waiting = live.get("activity") == "Waiting for your answer"
     icon = "❔" if waiting else "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"[int(clock / 2) % 10]
-    label = "Waiting for your answer" if waiting else "Working"
+    label = (
+        "Waiting for your answer"
+        if waiting
+        else ("Transcribing voice" if live.get("activity") == "Transcribing" else "Working")
+    )
     return f"{icon} {label} · {elapsed // 60:02}:{elapsed % 60:02} elapsed · Reasoning: {effort}"
 
 
@@ -82,12 +86,15 @@ def curated_models(models: list[dict]) -> list[dict]:
 def conversation_parts(conversation: dict, live: dict | None = None) -> list[str]:
     user = conversation.get("user")
     if not user:
-        return ["Send a message or an image to begin."]
+        return ["Send text, an image or a voice recording to begin."]
     payload = user["payload"]
     prompt = payload.get("text", "")
     images = len(payload.get("images", []))
     if images:
         prompt += f"\n[Images: {images}]"
+    transcripts = [e["payload"]["text"] for e in conversation["replies"] if e["kind"] == "transcription"]
+    if payload.get("audio"):
+        prompt += "\n[Voice]\n" + ("\n".join(transcripts) or "Transcribing…")
     replies = []
     progress = False
 

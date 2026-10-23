@@ -377,7 +377,7 @@ async def test_location_session_config_details_are_one_editable_panel(app):
     assert "No sessions here yet" in panel(transport).text
     await click(app, "➕ New session")
     sid = runtime.store.get("selected")
-    assert "Send a message" in panel(transport).text
+    assert "voice recording" in panel(transport).text
     assert not any(m == "turn/start" for m, p in native.calls)
     await click(app, "⚙️ Config")
     exits(transport)
@@ -952,3 +952,47 @@ async def test_session_pages_show_ten_entries_and_paired_arrows_with_working_mar
     assert "Page 2/2" in panel(transport).text
     await click(app, "⬅️ Back")
     exits(transport)
+
+
+async def test_voice_download_target_retry_and_transcript_rendering(app, host):
+    from telegram_vibecoding.presentation import conversation_parts
+
+    runtime, transport, engine, native = app
+    a = engine.store.create_session(str(host[0].data_dir.parent), "Voice", "medium")
+    b = engine.store.create_session(str(host[0].data_dir.parent), "Other", "medium")
+    runtime.store.set("selected", a["id"])
+    runtime.store.set("mode", "chat")
+    message = update(3100, "", voice={"file_id": "voice", "file_unique_id": "voice", "duration": 3})
+    runtime.capture(message)
+    runtime.store.set("selected", b["id"])
+    downloads = []
+
+    async def download(file_id, destination):
+        downloads.append(file_id)
+        destination.write(b"OggS-test-recording")
+
+    async def transcribe(path):
+        return {"text": "Проверь картинки и голос", "language": "ru"}
+
+    runtime.bot.download = download
+    engine.speech.transcribe = transcribe
+    row = runtime.store.one("SELECT * FROM inbox WHERE id=3100")
+    await runtime.process_messages([row])
+    await settle(engine)
+    assert engine.store.request("telegram:3100")["session_id"] == a["id"]
+    assert engine.store.session(b["id"])["thread_id"] is None
+    path = await runtime.download_voice(message["message"], a["id"])
+    from pathlib import Path
+
+    assert Path(path).read_bytes() == b"OggS-test-recording"
+    assert Path(path).stat().st_mode & 0o777 == 0o600
+    assert downloads == ["voice"]
+    rendered = "".join(conversation_parts(engine.store.conversation(a["id"])))
+    assert "You\n\n[Voice]\nПроверь картинки и голос" in rendered
+    assert [p["input"] for m, p in native.calls if m == "turn/start"] == [
+        [{"type": "text", "text": "Проверь картинки и голос"}]
+    ]
+    with pytest.raises(ValueError, match="five minutes"):
+        await runtime.download_voice({"voice": {"duration": 301}}, a["id"])
+    with pytest.raises(ValueError, match="Video is not supported"):
+        await runtime.download_image({"video": {}}, a["id"])
