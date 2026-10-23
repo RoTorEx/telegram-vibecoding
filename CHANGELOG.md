@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-23
+
 - Apply panel positioning to every message/command, including empty Stop and
   unknown commands, and refresh promptly after agent input is accepted.
 - Animate active work with elapsed time and reasoning effort. Show public
