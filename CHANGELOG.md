@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-10-24
+
 - Render agent Markdown as safe Telegram formatting with readable table rows and balanced formatting across history pages; keep original messages intact.
 
 ## [0.1.6] - 2026-10-23
