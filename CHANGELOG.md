@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-23
+
 - Add independent Kernel-compliant interactive release and atomic tag publishing,
   with one canonical package version and matching CLI/build metadata.
 - Show the independently running Telegram and Core versions in Settings.
