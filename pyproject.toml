@@ -32,4 +32,3 @@ python_version = "3.13"
 files = ["src"]
 check_untyped_defs = true
 ignore_missing_imports = true
-
