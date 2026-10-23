@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-23
+
 - Keep the active panel below new owner messages: Start/Menu, text and media
   relocate it to the chat tail while buttons and streaming edit it in place.
 - Repair stranded panels from the durable inbox at startup. Retire old bot
