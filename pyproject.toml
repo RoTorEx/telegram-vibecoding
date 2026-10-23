@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "Private Telegram interface for Remote Vibecoding."
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = ["aiogram>=3.13,<4", "aiogram-dialog>=2.5,<3", "aiohttp>=3.10,<4"]
+dependencies = ["aiogram>=3.13,<4", "aiogram-dialog>=2.5,<3", "aiohttp>=3.10,<4", "markdown-it-py>=3,<5"]
 
 [project.scripts]
 telegram-vibecoding = "telegram_vibecoding.cli:main"

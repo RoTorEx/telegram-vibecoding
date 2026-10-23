@@ -1027,3 +1027,27 @@ async def test_stop_is_usable_while_voice_is_transcribing(app):
     assert engine.store.request("telegram:3200")["state"] == "cancelled"
     assert engine.store.session(sid)["status"] == "interrupted"
     assert not any(m == "turn/start" for m, p in native.calls)
+
+
+async def test_saved_agent_markdown_renders_in_the_actual_dialog_panel(app):
+    runtime, transport, engine, native = app
+    await command(app, "/start")
+    await click(app, "📍 Location")
+    await click(app, "1")
+    await click(app, "➕ New session")
+    sid = runtime.store.get("selected")
+    engine.store.event(sid, "user", {"text": "<b>literal user input</b>"})
+    raw = "**Ready**\n\n| Service | Purpose |\n|---|---|\n| `core` | Agents & state |"
+    engine.store.event(sid, "message", {"text": raw})
+    await runtime.refresh_panel()
+    rendered = panel(transport)
+    assert rendered.parse_mode == "HTML"
+    assert rendered.link_preview_options.is_disabled
+    assert "<b>Ready</b>" in rendered.text
+    assert "• <code>core</code> — Agents &amp; state" in rendered.text
+    assert "&lt;b&gt;literal user input&lt;/b&gt;" in rendered.text
+    assert "**" not in rendered.text and "|" not in rendered.text
+    assert engine.store.history(sid)[-1]["payload"]["text"] == raw
+    await click(app, "ℹ️ Details")
+    await click(app, "⬅️ Back")
+    assert "<b>Ready</b>" in panel(transport).text

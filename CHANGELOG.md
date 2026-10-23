@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Render agent Markdown as safe Telegram formatting with readable table rows and balanced formatting across history pages; keep original messages intact.
+
 ## [0.1.6] - 2026-10-23
 
 - Keep Stop available during voice preprocessing and refresh the transcript as soon as it is stored.

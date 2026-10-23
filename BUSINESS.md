@@ -91,3 +91,18 @@ left/right arrows share one row and clamp at the first/last page. A completed
 answer shows its age as s, m, h or d; working/transcribing sessions show an
 hourglass and questions awaiting the owner show a question marker. Ages refresh
 while the list is open; metadata edits do not reset the response timestamp.
+
+## Agent Markdown display
+
+Parse native answer Markdown for display using a real parser, then emit only
+Telegram-supported HTML formatting. Preserve original events and user input.
+Bold, italic, strikethrough, headings, links, lists, quotes and code are readable;
+raw HTML is literal text. Tables become readable rows for narrow phone screens,
+preserving headers and cell contents. Do not rewrite the agent prompt to enforce
+an output format. Public progress keeps its existing code filtering.
+
+Split rendered content at 3200 visible UTF-16 units, preserving Unicode and
+reopening formatting on every page. Escape session names, paths, errors, typed
+prompts and transcripts. All menus retain their normal buttons; formatting never
+changes callbacks, session identity or original history. Disable link previews
+to keep the single panel compact. Older answers are formatted when reopened.

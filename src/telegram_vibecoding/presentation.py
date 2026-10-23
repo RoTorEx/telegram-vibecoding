@@ -3,7 +3,10 @@
 import re
 import time
 from datetime import datetime
+from html import escape
 from zoneinfo import ZoneInfo
+
+from telegram_vibecoding.markdown import render_markdown, split_html
 
 PART_UNITS = 3500
 
@@ -83,7 +86,9 @@ def curated_models(models: list[dict]) -> list[dict]:
     return result or visible[:3]
 
 
-def conversation_parts(conversation: dict, live: dict | None = None) -> list[str]:
+def conversation_parts(conversation: dict, live: dict | None = None, *, rich: bool = False) -> list[str]:
+    literal = escape if rich else str
+    formatted = render_markdown if rich else str
     user = conversation.get("user")
     if not user:
         return ["Send text, an image or a voice recording to begin."]
@@ -101,7 +106,7 @@ def conversation_parts(conversation: dict, live: dict | None = None) -> list[str
     def append_progress(text, label="Reasoning"):
         nonlocal progress
         if prose := progress_prose(text):
-            replies.append("────────\n" + label + "\n" + prose)
+            replies.append("────────\n" + label + "\n" + formatted(prose))
             progress = True
 
     for event in conversation["replies"]:
@@ -113,27 +118,27 @@ def conversation_parts(conversation: dict, live: dict | None = None) -> list[str
             if p.get("phase") == "commentary":
                 append_progress(p.get("text", ""), "Progress")
             else:
-                replies.append(("────────\nAnswer\n" if progress else "") + p.get("text", ""))
+                replies.append(("────────\nAnswer\n" if progress else "") + formatted(p.get("text", "")))
         elif event["kind"] == "error":
-            replies.append("⚠️ " + p.get("text", "Unknown error"))
+            replies.append("⚠️ " + literal(p.get("text", "Unknown error")))
         elif event["kind"] == "question":
             for question in p.get("questions", []):
                 lines = ["Question", question["question"]]
                 lines += [
                     f"• {o['label']}: {o.get('description', '')}" for o in question.get("options") or []
                 ]
-                replies.append("\n".join(lines))
+                replies.append(literal("\n".join(lines)))
             if not p.get("questions"):
-                replies.append(str(p.get("message") or p.get("url") or "MCP request"))
+                replies.append(literal(str(p.get("message") or p.get("url") or "MCP request")))
         elif event["kind"] == "completed" and p.get("status") != "completed":
             error = p.get("error") or {}
-            replies.append(p.get("text") or error.get("message") or p["status"].capitalize())
+            replies.append(literal(p.get("text") or error.get("message") or p["status"].capitalize()))
     if live:
         for parts in live.get("summaries", {}).values():
             for key in sorted(parts, key=int):
                 append_progress(parts[key])
-    body = "You\n" + prompt + "\n\nCodex\n" + ("\n\n".join(replies) or "Waiting for a response…")
-    return split_text(body, 3200)
+    body = "You\n" + literal(prompt) + "\n\nCodex\n" + ("\n\n".join(replies) or "Waiting for a response…")
+    return split_html(body, 3200) if rich else split_text(body, 3200)
 
 
 def split_text(text: str, limit: int = PART_UNITS) -> list[str]:
