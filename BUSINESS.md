@@ -8,7 +8,8 @@ chat may send input or use callbacks. No extra LLM or rewritten prompts.
 
 ## Interaction contract
 
-Main Deck has a full-width primary Settings button first, then Location.
+Main Deck has a full-width Settings button first, then Location. Use Telegram's
+default button styling without a primary color accent.
 Every screen ends with Deck and Back in one row. Home is the default first
 location. Numbered 1–10 controls page through locations and directory-scoped
 sessions and archives. Selecting a location does not start an agent. New

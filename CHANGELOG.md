@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Use Telegram's default Settings button styling while retaining its full-width
+  first row.
+
 ## [0.1.3] - 2026-10-23
 
 - Apply panel positioning to every message/command, including empty Stop and

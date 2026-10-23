@@ -4,11 +4,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from aiogram.enums import ButtonStyle
 from aiogram.fsm.state import State, StatesGroup
 from aiogram_dialog import Dialog, DialogManager, ShowMode, StartMode, Window
 from aiogram_dialog.widgets.kbd import Button, Group, Row, Select
-from aiogram_dialog.widgets.style import Style
 from aiogram_dialog.widgets.text import Const, Format
 
 from telegram_vibecoding import __version__
@@ -453,7 +451,7 @@ def make_dialog() -> Dialog:
     return Dialog(
         Window(
             Format("{text}"),
-            Button(Const("⚙️ Settings"), id="settings", on_click=settings, style=Style(ButtonStyle.PRIMARY)),
+            Button(Const("⚙️ Settings"), id="settings", on_click=settings),
             Button(Const("📍 Location"), id="locations", on_click=locations),
             navigation(with_config=False),
             state=Screens.deck,
