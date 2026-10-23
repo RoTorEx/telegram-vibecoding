@@ -183,7 +183,7 @@ async def test_real_dialog_deck_and_navigation_do_not_start_native_work(app):
     assert [b.text for b in markup.inline_keyboard[0]] == ["⚙️ Settings"]
     assert "📍 Location" in texts
     assert "💬 Sessions" not in texts and "➕ New session" not in texts
-    assert [b.text for b in markup.inline_keyboard[-1]] == ["🏠 Deck", "⬅️ Back"]
+    assert [b.text for b in markup.inline_keyboard[-1]] == ["⬅️ Back", "🏠 Deck"]
     assert runtime.store.get("mode") == "menu"
     assert not native.calls
 
@@ -344,8 +344,23 @@ async def click(app, text):
     await runtime.process_control(runtime.store.one("SELECT * FROM inbox WHERE id=?", (uid,)))
 
 
+async def resume_legacy_location_input(app):
+    # Complete already-captured directory input after removing its menu entrypoint.
+    from types import SimpleNamespace
+
+    from telegram_vibecoding.bot import foreground
+    from telegram_vibecoding.dialogs import prompt
+
+    runtime, *_ = app
+    bg = runtime.background.bg(
+        runtime.bot, runtime.settings.allowed_user_id, runtime.settings.allowed_user_id
+    )
+    async with foreground(bg) as manager:
+        await prompt(None, SimpleNamespace(widget_id="location"), manager)
+
+
 def exits(transport):
-    assert [b.text for b in panel(transport).reply_markup.inline_keyboard[-1]] == ["🏠 Deck", "⬅️ Back"]
+    assert [b.text for b in panel(transport).reply_markup.inline_keyboard[-1]] == ["⬅️ Back", "🏠 Deck"]
 
 
 async def test_location_session_config_details_are_one_editable_panel(app):
@@ -458,23 +473,23 @@ async def test_numbered_location_pages_filter_sessions_and_keep_home_first(app, 
     sid = runtime.store.get("selected")
     assert engine.store.session(sid)["name"] == "Work 09"
     await click(app, "ℹ️ Details")
-    await click(app, "🗃 Close session")
+    await click(app, "✖ Close session")
     assert engine.store.session(sid)["archived"] == 1
-    await click(app, "🗃 Archived")
-    assert "Work 09" in panel(transport).text and "Work 08" not in panel(transport).text
-    await click(app, "1")
-    assert engine.store.session(sid)["archived"] == 0
+    labels = [b.text for row in panel(transport).reply_markup.inline_keyboard for b in row]
+    assert "🗃 Archived" not in labels and "⚙️ Config" not in labels
+    assert "Work 09" not in panel(transport).text
+    assert not any(method == "thread/unarchive" for method, params in native.calls)
 
 
-async def test_other_location_cancel_and_save_do_not_create_sessions(app, tmp_path):
+async def test_existing_legacy_location_input_can_finish_without_exposing_a_new_path_button(app, tmp_path):
     runtime, transport, engine, native = app
     await command(app, "/start")
     await click(app, "📍 Location")
-    await click(app, "📂 Other location")
+    await resume_legacy_location_input(app)
     assert runtime.store.get("mode") == "input"
     await click(app, "⬅️ Back")
     assert runtime.store.get("mode") == "menu"
-    await click(app, "📂 Other location")
+    await resume_legacy_location_input(app)
     await command(app, str(tmp_path))
     assert runtime.store.get("location") == str(tmp_path)
     assert "No sessions here" in panel(transport).text
@@ -532,7 +547,7 @@ async def test_invalid_location_is_an_inline_error_with_back_and_retry(app, tmp_
     runtime, transport, engine, native = app
     await command(app, "/start")
     await click(app, "📍 Location")
-    await click(app, "📂 Other location")
+    await resume_legacy_location_input(app)
     await command(app, "relative/path")
     assert "absolute" in panel(transport).text
     exits(transport)
@@ -787,7 +802,7 @@ async def test_absolute_directory_input_is_not_mistaken_for_an_unknown_command(a
     runtime, transport, engine, native = app
     await command(app, "/start")
     await click(app, "📍 Location")
-    await click(app, "📂 Other location")
+    await resume_legacy_location_input(app)
     await command(app, "/tmp")
     assert runtime.store.get("location") == "/private/tmp" or runtime.store.get("location") == "/tmp"
     assert "Unknown command" not in panel(transport).text
@@ -843,3 +858,97 @@ async def test_live_feedback_animates_public_summaries_without_tool_or_code_outp
     assert completed.index("Reasoning\nChecked behavior.") < completed.index("Answer\nFinal answer")
     assert "────────" in completed
     assert len(transport.messages) == 1
+
+
+async def test_top_level_menus_do_not_expose_configuration_from_a_remembered_session(app, tmp_path):
+    runtime, transport, engine, native = app
+    other = tmp_path / "another-project"
+    other.mkdir()
+    selected = engine.store.create_session(str(other), "Remembered session", "medium")
+    runtime.store.set("selected", selected["id"])
+    await command(app, "/start")
+    await click(app, "⚙️ Settings")
+    assert "⚙️ Config" not in [b.text for row in panel(transport).reply_markup.inline_keyboard for b in row]
+    exits(transport)
+    await click(app, "🏠 Deck")
+    await click(app, "📍 Location")
+    labels = [b.text for row in panel(transport).reply_markup.inline_keyboard for b in row]
+    assert not {"⚙️ Config", "📂 Other location", "🗃 Archived"}.intersection(labels)
+    exits(transport)
+    await click(app, "1")
+    assert "No sessions here yet" in panel(transport).text
+    labels = [b.text for row in panel(transport).reply_markup.inline_keyboard for b in row]
+    assert not {"⚙️ Config", "🗃 Archived"}.intersection(labels)
+    exits(transport)
+    assert engine.store.session(selected["id"])["name"] == "Remembered session"
+    assert not native.calls
+
+
+@pytest.mark.parametrize(
+    "screen,action", [("Screens:archived", ""), ("Screens:input", "location"), ("Screens:config", "")]
+)
+async def test_retired_views_recover_without_deleting_session_history(app, tmp_path, screen, action):
+    runtime, transport, engine, native = app
+    retained = engine.store.create_session(str(tmp_path), "Retained closed session", "medium")
+    engine.store.update_session(retained["id"], archived=1)
+    engine.store.event(retained["id"], "user", {"text": "Keep this request"})
+    engine.store.event(retained["id"], "message", {"text": "Keep this response"})
+    original_history = engine.store.history(retained["id"])
+    await runtime.initialize_panel()
+    runtime.store.set("screen", screen)
+    runtime.store.set("input_action", action)
+    original_count = len(engine.store.sessions(True)) + len(engine.store.sessions())
+    replacement = BotRuntime(runtime.settings, bot=runtime.bot, engine=runtime.engine)
+    replacement.throttle = runtime.throttle
+    try:
+        await replacement.initialize_panel()
+        assert "Main Deck" in panel(transport).text
+        assert len(engine.store.sessions(True)) + len(engine.store.sessions()) == original_count
+        assert engine.store.history(retained["id"]) == original_history
+        assert "🗃 Archived" not in [
+            b.text for row in panel(transport).reply_markup.inline_keyboard for b in row
+        ]
+        exits(transport)
+    finally:
+        replacement.store.close()
+
+
+def test_compact_response_age_uses_elapsed_time_and_handles_missing_replies():
+    from telegram_vibecoding.presentation import relative_age
+
+    assert relative_age(None, now=100000) == "—"
+    assert relative_age(99999, now=100000) == "1s"
+    assert relative_age(99941, now=100000) == "59s"
+    assert relative_age(99940, now=100000) == "1m"
+    assert relative_age(92800, now=100000) == "2h"
+    assert relative_age(0, now=259200) == "3d"
+    assert relative_age(100001, now=100000) == "0s"
+
+
+async def test_session_pages_show_ten_entries_and_paired_arrows_with_working_marker(app, tmp_path):
+    runtime, transport, engine, native = app
+    for index in range(12):
+        s = engine.store.create_session(str(tmp_path), f"Work {index:02}", "medium")
+        with engine.store.db:
+            engine.store.db.execute("UPDATE sessions SET updated=? WHERE id=?", (index, s["id"]))
+        engine.store.event(s["id"], "message", {"text": "Answer", "phase": "final_answer"})
+    engine.store.update_session(s["id"], status="working", turn_id="working-turn")
+    runtime.store.set("location", str(tmp_path))
+    await command(app, "/sessions")
+    current = panel(transport)
+    assert "1. Work 11 · ⏳" in current.text
+    assert "10. Work 02 · 💬" in current.text
+    assert "Work 01" not in current.text
+    assert any([button.text for button in row] == ["◀", "▶"] for row in current.reply_markup.inline_keyboard)
+    await click(app, "◀")
+    assert "Page 1/2" in panel(transport).text
+    await click(app, "▶")
+    assert "1. Work 01" in panel(transport).text and "2. Work 00" in panel(transport).text
+    assert "Work 02" not in panel(transport).text
+    assert any(
+        [button.text for button in row] == ["◀", "▶"] for row in panel(transport).reply_markup.inline_keyboard
+    )
+    await click(app, "▶")
+    assert "Page 2/2" in panel(transport).text
+    await click(app, "⬅️ Back")
+    exits(transport)

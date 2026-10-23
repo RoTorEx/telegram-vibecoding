@@ -143,7 +143,17 @@ class BotRuntime:
             "last_user_message_id",
             str(max(int(self.store.get("last_user_message_id", "0")), (last_input or {}).get("id") or 0)),
         )
-        if self.store.get("ui_version") != "2":
+        screen = self.store.get("screen")
+        trail = json.loads(self.store.get("trail", "[]"))
+        retired_view = (
+            screen == "Screens:archived"
+            or (screen == "Screens:input" and self.store.get("input_action") == "location")
+            or (
+                screen in {"Screens:config", "Screens:models"}
+                and not {"Screens:chat", "Screens:details"}.intersection(trail)
+            )
+        )
+        if self.store.get("ui_version") != "2" or retired_view:
             with self.store.db:
                 self.store.db.execute("DELETE FROM meta WHERE key LIKE 'fsm:%'")
             self.store.set("ui_version", "2")
@@ -154,6 +164,7 @@ class BotRuntime:
         self.dp = Dispatcher(storage=SQLiteFSM(self.store))
         self.dp["runtime"] = self
         self.last_send = 0.0
+        self.last_list_refresh = 0.0
         self.send_lock = asyncio.Lock()
         self.ui_lock = asyncio.Lock()
         self.stop_event = asyncio.Event()
@@ -191,7 +202,7 @@ class BotRuntime:
             sid = (callback.data or "").split(":", 1)[1]
             session = await self.engine.call(f"/sessions/{sid}")
             if session["archived"]:
-                await callback.answer("This session is archived. Reopen it from Archived.")
+                await callback.answer("This session is closed.")
                 return
             self.store.set("selected", sid)
             self.store.set("location", session["cwd"])
@@ -281,8 +292,8 @@ class BotRuntime:
             inline_keyboard=[
                 [InlineKeyboardButton(text="💬 Open session", callback_data="open:" + sid)],
                 [
-                    InlineKeyboardButton(text="🏠 Deck", callback_data="deck"),
                     InlineKeyboardButton(text="⬅️ Back", callback_data="back"),
+                    InlineKeyboardButton(text="🏠 Deck", callback_data="deck"),
                 ],
             ]
         )
@@ -296,8 +307,8 @@ class BotRuntime:
             markup = InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
-                        InlineKeyboardButton(text="🏠 Deck", callback_data="deck"),
                         InlineKeyboardButton(text="⬅️ Back", callback_data="back"),
+                        InlineKeyboardButton(text="🏠 Deck", callback_data="deck"),
                     ]
                 ]
             )
@@ -634,9 +645,15 @@ class BotRuntime:
     async def preview_loop(self):
         while not self.stop_event.is_set():
             try:
-                live = await self.engine.call("/live")
-                if self.store.get("mode") == "chat" and self.store.get("selected") in live:
-                    await self.refresh_panel()
+                if self.store.get("mode") == "chat":
+                    live = await self.engine.call("/live")
+                    if self.store.get("selected") in live:
+                        await self.refresh_panel()
+                elif self.store.get("screen") == Screens.sessions.state:
+                    now = time.monotonic()
+                    if now - self.last_list_refresh >= 5:
+                        await self.refresh_panel()
+                        self.last_list_refresh = now
             except TelegramRetryAfter as exc:
                 await asyncio.sleep(exc.retry_after)
             except Exception as exc:

@@ -8,6 +8,26 @@ from zoneinfo import ZoneInfo
 PART_UNITS = 3500
 
 
+def relative_age(value: float | None, now: float | None = None) -> str:
+    if value is None:
+        return "—"
+    seconds = max(0, int((time.time() if now is None else now) - value))
+    for duration, suffix in [(86400, "d"), (3600, "h"), (60, "m")]:
+        if seconds >= duration:
+            return f"{seconds // duration}{suffix}"
+    return f"{seconds}s"
+
+
+def session_label(session: dict) -> str:
+    if session["status"] == "waiting":
+        marker = "❔"
+    elif session.get("turn_id") or session["status"] in {"connecting", "working"}:
+        marker = "⏳"
+    else:
+        marker = "💬 " + relative_age(session.get("last_response"))
+    return f"{session['name']} · {marker}"
+
+
 def progress_prose(text: str) -> str:
     """Render public progress prose without code blocks, inline code or shell output."""
     lines = []

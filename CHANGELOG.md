@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- Show compact last-response ages and active-work markers in ten-session pages,
+  with paired left/right controls and periodic visible-list refreshes.
+
+- Remove manual location entry and archive browsing/reopening from the interface.
+  Keep Config inside an open session and use Back-left/Deck-right footers on
+  every screen. Recover an already-open retired archive view safely.
+
 - Use Telegram's default Settings button styling while retaining its full-width
   first row.
 

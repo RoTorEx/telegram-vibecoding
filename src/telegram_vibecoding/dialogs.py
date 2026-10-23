@@ -10,7 +10,13 @@ from aiogram_dialog.widgets.kbd import Button, Group, Row, Select
 from aiogram_dialog.widgets.text import Const, Format
 
 from telegram_vibecoding import __version__
-from telegram_vibecoding.presentation import activity_label, conversation_parts, curated_models, timestamp
+from telegram_vibecoding.presentation import (
+    activity_label,
+    conversation_parts,
+    curated_models,
+    session_label,
+    timestamp,
+)
 
 
 class Screens(StatesGroup):
@@ -22,7 +28,6 @@ class Screens(StatesGroup):
     details = State()
     settings = State()
     input = State()
-    archived = State()
     models = State()
 
 
@@ -40,7 +45,7 @@ async def location(app) -> dict:
 
 def numbered(app, screen, entries, describe) -> tuple[str, list, bool, bool]:
     key = "page:" + screen.state
-    page = min(int(app.store.get(key, "0")), max(0, (len(entries) - 1) // 10))
+    page = max(0, min(int(app.store.get(key, "0")), max(0, (len(entries) - 1) // 10)))
     app.store.set(key, str(page))
     visible = entries[page * 10 : page * 10 + 10]
     text = "\n\n".join(f"{i}. {describe(p)}" for i, p in enumerate(visible, 1))
@@ -60,7 +65,11 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
     v: dict[str, Any] = {
         "text": "",
         "rows": [],
-        "has_selected": bool(session),
+        "has_session_context": bool(session)
+        and (
+            screen in {Screens.chat, Screens.config, Screens.details, Screens.models}
+            or (screen == Screens.input and app.store.get("input_action") in {"rename", "folder"})
+        ),
         "previous_page": False,
         "next_page": False,
         "can_stop": bool(session and session["turn_id"]),
@@ -85,18 +94,17 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
             app, screen, projects, lambda p: f"{p['name']}\n{p['path']}"
         )
         v["text"] = "📍 Location\n\nChoose where to work.\n\n" + listing
-    elif screen in {Screens.sessions, Screens.archived}:
-        archived = screen == Screens.archived
-        sessions = await app.engine.call("/sessions" + ("?archived=1" if archived else ""))
+    elif screen == Screens.sessions:
+        sessions = await app.engine.call("/sessions")
         sessions = [s for s in sessions if s["cwd"] == place["path"]]
         listing, v["rows"], v["previous_page"], v["next_page"] = numbered(
-            app, screen, sessions, lambda s: f"{s['name']} · {s['status']}"
+            app, screen, sessions, session_label
         )
         v["text"] = (
             f"📍 {place['name']}\n{place['path']}\n\n"
-            + ("Archived sessions" if archived else "Sessions")
+            + "Sessions"
             + "\n\n"
-            + (listing or ("No archived sessions." if archived else "No sessions here yet. Start one below."))
+            + (listing or "No sessions here yet. Start one below.")
         )
     elif screen == Screens.chat and session:
         cursor = app.store.get("history_anchor")
@@ -190,6 +198,7 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
         app.store.set("model_catalog", json.dumps(models))
         v["rows"] = [(m.get("displayName") or m["id"], m["id"]) for m in models]
         v["text"] = f"🧠 Model · {session['name']}\n\nLatest available Sol and up to two latest Astra models."
+    v["has_pages"] = v["previous_page"] or v["next_page"]
     if notice := app.store.get("notice"):
         combined = v["text"] + "\n\n" + notice
         if len(combined.encode("utf-16-le")) // 2 <= 4000:
@@ -256,14 +265,11 @@ async def models(c, b, manager):
     await go(manager, Screens.models)
 
 
-async def archived(c, b, manager):
-    await go(manager, Screens.archived)
-
-
 async def choose_location(c, widget, manager, item_id):
     app = runtime(manager)
     place = next(p for p in await app.engine.call("/projects") if p["id"] == item_id)
     app.store.set("location", place["path"])
+    app.store.set(f"page:{Screens.sessions.state}", "0")
     await go(manager, Screens.sessions)
 
 
@@ -271,7 +277,8 @@ async def choose_session(c, widget, manager, item_id):
     app = runtime(manager)
     session = await app.engine.call(f"/sessions/{item_id}")
     if session["archived"]:
-        await app.engine.call(f"/sessions/{item_id}/reopen", {})
+        await c.answer("This session is closed.")
+        return
     app.store.set("selected", item_id)
     app.store.set("location", session["cwd"])
     app.store.set("history_anchor", "")
@@ -417,11 +424,11 @@ async def mcp(c, widget, manager):
 def navigation(*, with_config=True):
     buttons: list[Any] = []
     if with_config:
-        buttons.append(Button(Const("⚙️ Config"), id="config", on_click=config, when="has_selected"))
+        buttons.append(Button(Const("⚙️ Config"), id="config", on_click=config, when="has_session_context"))
     buttons.append(
         Row(
-            Button(Const("🏠 Deck"), id="deck", on_click=deck),
             Button(Const("⬅️ Back"), id="back", on_click=back),
+            Button(Const("🏠 Deck"), id="deck", on_click=deck),
         )
     )
     return Group(*buttons)
@@ -442,8 +449,9 @@ def numbered_picker(callback):
 
 def list_pages():
     return Row(
-        Button(Const("◀"), id="page_prev", on_click=page, when="previous_page"),
-        Button(Const("▶"), id="page_next", on_click=page, when="next_page"),
+        Button(Const("◀"), id="page_prev", on_click=page),
+        Button(Const("▶"), id="page_next", on_click=page),
+        when="has_pages",
     )
 
 
@@ -460,8 +468,7 @@ def make_dialog() -> Dialog:
             Format("{text}"),
             numbered_picker(choose_location),
             list_pages(),
-            Button(Const("📂 Other location"), id="location", on_click=prompt),
-            navigation(),
+            navigation(with_config=False),
             state=Screens.locations,
         ),
         Window(
@@ -469,16 +476,8 @@ def make_dialog() -> Dialog:
             Button(Const("➕ New session"), id="new", on_click=new_session),
             numbered_picker(choose_session),
             list_pages(),
-            Button(Const("🗃 Archived"), id="archived", on_click=archived),
-            navigation(),
+            navigation(with_config=False),
             state=Screens.sessions,
-        ),
-        Window(
-            Format("{text}"),
-            numbered_picker(choose_session),
-            list_pages(),
-            navigation(),
-            state=Screens.archived,
         ),
         Window(
             Format("{text}"),
@@ -519,12 +518,12 @@ def make_dialog() -> Dialog:
             Format("{text}"),
             Row(
                 Button(Const("✏️ Rename"), id="rename", on_click=prompt),
-                Button(Const("🗃 Close session"), id="close", on_click=close_session),
+                Button(Const("✖ Close session"), id="close", on_click=close_session),
             ),
             navigation(),
             state=Screens.details,
         ),
-        Window(Format("{text}"), navigation(), state=Screens.settings),
+        Window(Format("{text}"), navigation(with_config=False), state=Screens.settings),
         Window(Format("{text}"), navigation(), state=Screens.input),
         Window(
             Format("{text}"),

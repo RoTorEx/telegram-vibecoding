@@ -10,11 +10,12 @@ chat may send input or use callbacks. No extra LLM or rewritten prompts.
 
 Main Deck has a full-width Settings button first, then Location. Use Telegram's
 default button styling without a primary color accent.
-Every screen ends with Deck and Back in one row. Home is the default first
+Every screen ends with Back on the left and Deck on the right in one row. Home is the default first
 location. Numbered 1–10 controls page through locations and directory-scoped
-sessions and archives. Selecting a location does not start an agent. New
-session appears only within a location. Other location registers an existing
-host directory without creating a session.
+sessions. Selecting a location does not start an agent. New session appears only
+within a location. Locations are existing registered directories; do not expose
+a manual Other location input action in this menu. Config belongs to an open
+session and its nested views, never the location/session lists or global Settings.
 
 A session normally shows its title/status, original request and agent response
 in one editable panel. Previous/Next browse complete retained exchanges and
@@ -26,7 +27,8 @@ Settings apply to the next native turn without stopping active work.
 Details contains title, host, directory, location, creation/request/response/
 completion times and free disk space. Rename and Close live here. Times use
 Europe/Warsaw and their date-specific UTC offset. Navigation leaves work running;
-Stop interrupts it; Close archives without deleting project files.
+Stop interrupts it; Close ends the session without deleting project files.
+The bot has no archive browser or reopen action; closed history remains stored.
 
 ## Transport and state
 
@@ -55,7 +57,8 @@ Production code talks only to the versioned Core API, never imports Core code.
 Integration tests use the sibling Core checkout; runtime packaging does not.
 Restarting/updating this container must not restart Core or native agent work.
 The accepted bot is @GardenSandbox_bot, displayed as Telegram Vibecoding.
-Voice and additional hosts are later stages. No subagents.
+Local voice processing is tracked in the shared TASK.md. Video is out of scope.
+Additional hosts remain deferred. No subagents.
 
 ## Independent versioning
 
@@ -79,3 +82,9 @@ public native summaries and code-free progress prose, separated chronologically
 above the finished answer. Hide command/tool output, diffs and code blocks from
 progress. Do not display raw reasoning. Final answers and original user prompts
 remain intact. Completed summaries stay browsable in the paginated history.
+
+Session lists show at most ten entries per page. When multiple pages exist,
+left/right arrows share one row and clamp at the first/last page. A completed
+answer shows its age as s, m, h or d; working/transcribing sessions show an
+hourglass and questions awaiting the owner show a question marker. Ages refresh
+while the list is open; metadata edits do not reset the response timestamp.
