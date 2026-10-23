@@ -37,8 +37,13 @@ captured target. Outgoing changes are throttled to at least one second, with
 Telegram retry_after taking precedence.
 
 The frontend owns bot.db: captured input, UI state, offsets and output refresh
-requests. Input targets are captured before downloads/navigation. Delivery
-edits the existing panel and survives restarts. Native questions and free-text
+requests. Input targets are captured before downloads/navigation. Button navigation and streaming edit the current panel. A new owner message
+moves the panel below that input by sending the replacement first and retiring
+the previous bot panel. Telegram edits cannot change message order. Preserve
+all owner messages and stored conversation history. Track the latest input and
+unfinished retirement durably, including across upgrades. A failed replacement
+send preserves the old panel; failed cleanup never repeats the successful send.
+Startup refreshes the saved view and repairs a panel stranded above newer input. Native questions and free-text
 answers remain associated with their originating session. Errors retain
 navigation exits. An unavailable panel can be replaced without replaying input.
 

@@ -25,6 +25,7 @@ class TelegramFake(BaseSession):
         super().__init__()
         self.calls = []
         self.counter = 100
+        self.messages = {}
 
     async def close(self):
         pass
@@ -34,8 +35,9 @@ class TelegramFake(BaseSession):
         if isinstance(method, GetMe):
             return User(id=123456, is_bot=True, first_name="Relay", username="GardenSandbox_bot")
         if isinstance(method, (SendMessage, EditMessageText, SendDocument)):
-            self.counter += 1
-            return Message(
+            if isinstance(method, (SendMessage, SendDocument)):
+                self.counter += 1
+            result = Message(
                 message_id=getattr(method, "message_id", None) or self.counter,
                 date=datetime.now(UTC),
                 chat=Chat(id=42, type="private"),
@@ -43,7 +45,12 @@ class TelegramFake(BaseSession):
                 text=getattr(method, "text", None) or "document",
                 reply_markup=getattr(method, "reply_markup", None),
             )
-        if isinstance(method, (AnswerCallbackQuery, DeleteMessage, EditMessageReplyMarkup)):
+            self.messages[result.message_id] = result
+            return result
+        if isinstance(method, DeleteMessage):
+            self.messages.pop(method.message_id, None)
+            return True
+        if isinstance(method, (AnswerCallbackQuery, EditMessageReplyMarkup)):
             return True
         raise AssertionError(type(method).__name__)
 
@@ -76,6 +83,13 @@ async def app(host):
         pass
 
     app.throttle = throttle
+    capture = app.capture
+
+    def capture_with_chat_clock(body):
+        transport.counter = max(transport.counter, body.get("message", {}).get("message_id", 0))
+        return capture(body)
+
+    app.capture = capture_with_chat_clock
     yield app, transport, engine, native
     await bot.session.close()
     app.store.close()
@@ -295,9 +309,12 @@ def panel(transport):
 
 
 async def command(app, text):
-    runtime, *_ = app
+    runtime, transport, *_ = app
     uid = int(runtime.store.get("offset", "1000"))
-    runtime.capture(update(uid, text))
+    transport.counter += 1
+    body = update(uid, text)
+    body["message"]["message_id"] = transport.counter
+    runtime.capture(body)
     row = runtime.store.one("SELECT * FROM inbox WHERE id=?", (uid,))
     await runtime.process_navigation(row)
 
@@ -368,6 +385,7 @@ async def test_location_session_config_details_are_one_editable_panel(app):
     await click(app, "⚙️ Config")
     await click(app, "⬅️ Back")
     assert runtime.store.get("mode") == "input"
+    assert runtime.store.get("panel_id") == first_id
     await command(app, "A clear session title")
     assert engine.store.session(sid)["name"] == "A clear session title"
     assert "Details" in panel(transport).text
@@ -376,8 +394,8 @@ async def test_location_session_config_details_are_one_editable_panel(app):
     await click(app, "🏠 Deck")
     await click(app, "⬅️ Back")
     assert "Main Deck" in panel(transport).text
-    assert runtime.store.get("panel_id") == first_id
-    assert sum(isinstance(m, SendMessage) for m in transport.calls) == 1
+    assert runtime.store.get("panel_id") != first_id
+    assert len(transport.messages) == 1
 
 
 async def test_stream_delivery_history_and_navigation_preserve_one_panel(app, host):
@@ -389,9 +407,7 @@ async def test_stream_delivery_history_and_navigation_preserve_one_panel(app, ho
     sid = runtime.store.get("selected")
     first_id = runtime.store.get("panel_id")
     for index in range(2):
-        uid = 2000 + index
-        runtime.capture(update(uid, f"Original request {index}"))
-        await runtime.process_messages([runtime.store.one("SELECT * FROM inbox WHERE id=?", (uid,))])
+        await command(app, f"Original request {index}")
         await settle(engine)
         session = engine.store.session(sid)
         await runtime.refresh_panel()
@@ -405,8 +421,8 @@ async def test_stream_delivery_history_and_navigation_preserve_one_panel(app, ho
     assert "Original request 0" in panel(transport).text and "Exact native answer 0" in panel(transport).text
     await click(app, "Latest")
     assert "Exact native answer 1" in panel(transport).text
-    assert runtime.store.get("panel_id") == first_id
-    assert sum(isinstance(m, SendMessage) for m in transport.calls) == 1
+    assert runtime.store.get("panel_id") != first_id
+    assert len(transport.messages) == 1
     assert runtime.store.one("SELECT COUNT(*) AS n FROM outbox WHERE status='pending'")["n"] == 0
     # Leaving the session does not stop work or let later output overwrite the menu.
     runtime.capture(update(2010, "Run"))
@@ -509,7 +525,7 @@ async def test_panel_state_survives_runtime_restart_and_native_questions_stay_in
         assert "Simple" in panel(transport).text
     finally:
         replacement.store.close()
-    assert sum(isinstance(m, SendMessage) for m in transport.calls) == 1
+    assert len(transport.messages) == 1
 
 
 async def test_invalid_location_is_an_inline_error_with_back_and_retry(app, tmp_path):
@@ -524,7 +540,7 @@ async def test_invalid_location_is_an_inline_error_with_back_and_retry(app, tmp_
     await command(app, str(tmp_path))
     assert runtime.store.get("location") == str(tmp_path)
     assert "absolute" not in panel(transport).text
-    assert sum(isinstance(m, SendMessage) for m in transport.calls) == 1
+    assert len(transport.messages) == 1
 
 
 def test_curated_model_selection_and_long_conversation_parts_are_lossless():
@@ -548,7 +564,7 @@ def test_curated_model_selection_and_long_conversation_parts_are_lossless():
     assert all(len(p.encode("utf-16-le")) // 2 <= 3200 for p in parts)
 
 
-async def test_server_publishes_fresh_deck_and_repeated_start_reuses_it(app):
+async def test_repeated_start_promotes_the_panel_below_commands_and_buttons_edit_it(app):
     runtime, transport, engine, native = app
     await runtime.initialize_panel()
     first = runtime.store.get("panel_id")
@@ -557,8 +573,9 @@ async def test_server_publishes_fresh_deck_and_repeated_start_reuses_it(app):
     await click(app, "📍 Location")
     await command(app, "/menu")
     assert "Main Deck" in panel(transport).text
-    assert runtime.store.get("panel_id") == first
-    assert sum(isinstance(m, SendMessage) for m in transport.calls) == 1
+    assert int(runtime.store.get("panel_id")) > int(runtime.store.get("last_user_message_id"))
+    assert int(first) not in transport.messages
+    assert len(transport.messages) == 1
     exits(transport)
 
 
@@ -675,3 +692,78 @@ async def test_settings_reports_each_running_component_version_independently(app
     exits(transport)
     await click(app, "⬅️ Back")
     assert runtime.store.get("panel_id") == identity
+
+
+async def test_upgrade_recovers_latest_input_from_existing_inbox_and_moves_panel(app):
+    runtime, transport, engine, native = app
+    await runtime.initialize_panel()
+    old = int(runtime.store.get("panel_id"))
+    body = update(9000, "/start")
+    body["message"]["message_id"] = 185
+    runtime.capture(body)
+    runtime.store.processed(9000)
+    with runtime.store.db:
+        runtime.store.db.execute("DELETE FROM meta WHERE key='last_user_message_id'")
+    replacement = BotRuntime(runtime.settings, bot=runtime.bot, engine=runtime.engine)
+    replacement.throttle = runtime.throttle
+    try:
+        await replacement.refresh_panel()
+        assert int(replacement.store.get("panel_id")) > 185
+        assert old not in transport.messages
+        assert len(transport.messages) == 1
+        assert not native.calls
+    finally:
+        replacement.store.close()
+
+
+async def test_failed_replacement_send_preserves_old_panel_until_retry_succeeds(app):
+    from aiogram.exceptions import TelegramNetworkError
+
+    runtime, transport, engine, native = app
+    await runtime.initialize_panel()
+    old = int(runtime.store.get("panel_id"))
+    original = transport.make_request
+
+    async def fail_send(bot, method, timeout=None):
+        if isinstance(method, SendMessage):
+            raise TelegramNetworkError(method=method, message="test outage")
+        return await original(bot, method, timeout)
+
+    transport.make_request = fail_send
+    with pytest.raises(TelegramNetworkError):
+        await command(app, "/start")
+    assert int(runtime.store.get("panel_id")) == old
+    assert old in transport.messages
+    row = runtime.store.one("SELECT * FROM inbox WHERE status='pending'")
+    transport.make_request = original
+    await runtime.process_navigation(row)
+    assert int(runtime.store.get("panel_id")) > int(runtime.store.get("last_user_message_id"))
+    assert old not in transport.messages
+    assert len(transport.messages) == 1
+
+
+async def test_failed_old_panel_cleanup_does_not_repeat_successful_send(app):
+    from aiogram.exceptions import TelegramNetworkError
+
+    runtime, transport, engine, native = app
+    await runtime.initialize_panel()
+    old = int(runtime.store.get("panel_id"))
+    original = transport.make_request
+
+    async def fail_delete(bot, method, timeout=None):
+        if isinstance(method, DeleteMessage):
+            raise TelegramNetworkError(method=method, message="test outage")
+        return await original(bot, method, timeout)
+
+    transport.make_request = fail_delete
+    await command(app, "/start")
+    published = runtime.store.get("panel_id")
+    sends = sum(isinstance(m, SendMessage) for m in transport.calls)
+    await runtime.refresh_panel()
+    assert runtime.store.get("panel_id") == published
+    assert sum(isinstance(m, SendMessage) for m in transport.calls) == sends
+    transport.make_request = original
+    await runtime.clean_retired_panels()
+    assert old not in transport.messages
+    assert len(transport.messages) == 1
+    assert runtime.store.get("retired_panels") == "[]"

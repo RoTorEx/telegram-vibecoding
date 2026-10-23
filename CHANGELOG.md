@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Keep the active panel below new owner messages: Start/Menu, text and media
+  relocate it to the chat tail while buttons and streaming edit it in place.
+- Repair stranded panels from the durable inbox at startup. Retire old bot
+  panels only after replacement succeeds, retry cleanup without duplicate sends
+  and recover expired controls directly into Main Deck.
+
 ## [0.1.1] - 2026-10-23
 
 - Add independent Kernel-compliant interactive release and atomic tag publishing,

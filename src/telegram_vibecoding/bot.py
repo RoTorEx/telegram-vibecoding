@@ -10,12 +10,13 @@ import time
 import uuid
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.exceptions import (
+    TelegramAPIError,
     TelegramBadRequest,
     TelegramConflictError,
     TelegramForbiddenError,
@@ -102,6 +103,24 @@ class PanelMessages(MessageManager):
 
     async def show_message(self, bot, new_message, old_message):
         async with self.app.send_lock:
+            published = int(self.app.store.get("panel_id", "0"))
+            if old_message and published > old_message.message_id:
+                old_message = replace(old_message, message_id=published, text=None)
+            if old_message and old_message.message_id < int(self.app.store.get("last_user_message_id", "0")):
+                # Editing preserves Telegram chronology. Publish below new input first.
+                await self.app.throttle()
+                sent = await super().show_message(bot, replace(new_message, show_mode=ShowMode.SEND), None)
+                self.app.store.set("panel_id", str(sent.message_id))
+                retired = json.loads(self.app.store.get("retired_panels", "[]"))
+                self.app.store.set("retired_panels", json.dumps([*retired, old_message.message_id]))
+                log.info(
+                    "Panel moved below input: old=%s new=%s input=%s",
+                    old_message.message_id,
+                    sent.message_id,
+                    self.app.store.get("last_user_message_id"),
+                )
+                await self.app.clean_retired_panels()
+                return sent
             if old_message is None or self._message_changed(new_message, old_message):
                 await self.app.throttle()
             sent = await super().show_message(bot, new_message, old_message)
@@ -116,6 +135,13 @@ class BotRuntime:
         self.instance = instance_file.read_text().strip() if instance_file.exists() else uuid.uuid4().hex
         settings.prepare()
         self.store = BotStore(settings.data_dir / "bot.db")
+        last_input = self.store.one(
+            "SELECT MAX(CAST(json_extract(body,'$.message.message_id') AS INTEGER)) AS id FROM inbox"
+        )
+        self.store.set(
+            "last_user_message_id",
+            str(max(int(self.store.get("last_user_message_id", "0")), (last_input or {}).get("id") or 0)),
+        )
         if self.store.get("ui_version") != "2":
             with self.store.db:
                 self.store.db.execute("DELETE FROM meta WHERE key LIKE 'fsm:%'")
@@ -201,11 +227,41 @@ class BotRuntime:
 
     async def initialize_panel(self):
         async with self.ui_lock:
-            bg = self.background.bg(self.bot, self.settings.allowed_user_id, self.settings.allowed_user_id)
-            async with foreground(bg) as manager:
-                if not manager.has_context() and self.store.get("panel_id"):
-                    manager.current_stack().last_message_id = int(self.store.get("panel_id"))
-                await open_screen(manager, Screens.deck)
+            await self.open_deck_panel()
+
+    async def open_deck_panel(self):
+        bg = self.background.bg(self.bot, self.settings.allowed_user_id, self.settings.allowed_user_id)
+        async with foreground(bg) as manager:
+            if not manager.has_context() and self.store.get("panel_id"):
+                manager.current_stack().last_message_id = int(self.store.get("panel_id"))
+            await open_screen(manager, Screens.deck)
+
+    async def clean_retired_panels(self):
+        pending = json.loads(self.store.get("retired_panels", "[]"))
+        for message_id in list(pending):
+            try:
+                await self.throttle()
+                try:
+                    await self.bot.delete_message(self.settings.allowed_user_id, message_id)
+                except TelegramBadRequest as exc:
+                    if "message to delete not found" not in exc.message.lower():
+                        try:
+                            await self.bot.edit_message_reply_markup(
+                                chat_id=self.settings.allowed_user_id,
+                                message_id=message_id,
+                                reply_markup=None,
+                            )
+                        except TelegramBadRequest as cleanup:
+                            if "message is not modified" not in cleanup.message.lower():
+                                raise
+            except TelegramRetryAfter as exc:
+                self.last_send = time.monotonic() + exc.retry_after
+                break
+            except TelegramAPIError as exc:
+                log.warning("Old panel cleanup deferred: %s", type(exc).__name__)
+            else:
+                pending.remove(message_id)
+                self.store.set("retired_panels", json.dumps(pending))
 
     async def render_panel(self):
         bg = self.background.bg(self.bot, self.settings.allowed_user_id, self.settings.allowed_user_id)
@@ -280,6 +336,11 @@ class BotRuntime:
             return False
         sid, mode = self.store.get("selected") or None, self.store.get("mode", "menu")
         message = update.get("message", {})
+        if message.get("message_id"):
+            self.store.set(
+                "last_user_message_id",
+                str(max(int(self.store.get("last_user_message_id", "0")), message["message_id"])),
+            )
         if group := message.get("media_group_id"):
             first = self.store.one(
                 "SELECT session_id,mode FROM inbox WHERE json_extract(body,'$.message.media_group_id')=? ORDER BY id LIMIT 1",
@@ -317,7 +378,7 @@ class BotRuntime:
                     runtime=self,
                 )
             except (UnknownIntent, UnknownState):
-                await self.send("That menu expired. Use /menu for fresh controls.")
+                await self.open_deck_panel()
             except (ValueError, IndexError, KeyError) as exc:
                 self.store.set("notice", str(exc)[:1000])
                 if self.store.get("screen"):
@@ -540,6 +601,8 @@ class BotRuntime:
         while not self.stop_event.is_set():
             try:
                 await self.deliver_pending()
+                async with self.send_lock:
+                    await self.clean_retired_panels()
             except TelegramRetryAfter as exc:
                 await asyncio.sleep(exc.retry_after)
             except Exception as exc:
@@ -594,12 +657,14 @@ class BotRuntime:
             except TelegramBadRequest as exc:
                 if "chat not found" not in str(exc).lower():
                     raise
-        if not self.store.get("screen"):
-            try:
+        try:
+            if self.store.get("screen"):
+                await self.refresh_panel()
+            else:
                 await self.initialize_panel()
-            except TelegramForbiddenError:
-                # A fresh bot cannot initiate a chat before its owner presses Start.
-                log.info("Waiting for the owner to start the private chat")
+        except TelegramForbiddenError:
+            # A fresh bot cannot initiate a chat before its owner presses Start.
+            log.info("Waiting for the owner to start the private chat")
         self.store.set("bot_pid", str(os.getpid()))
         self.store.set("bot_instance", self.instance)
         log.info("Bot connected: @%s; owner=%s", me.username, self.settings.allowed_user_id)
