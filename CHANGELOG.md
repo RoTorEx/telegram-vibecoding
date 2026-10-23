@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-10-23
+
 - Accept Telegram voice recordings, preserve their captured session and show local transcripts in user history; video remains unsupported.
 
 ## [0.1.4] - 2026-10-23
