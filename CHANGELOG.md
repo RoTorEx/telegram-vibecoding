@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-10-23
+
 - Show compact last-response ages and active-work markers in ten-session pages,
   with paired left/right controls and periodic visible-list refreshes.
 
