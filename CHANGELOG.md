@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Apply panel positioning to every message/command, including empty Stop and
+  unknown commands, and refresh promptly after agent input is accepted.
+- Animate active work with elapsed time and reasoning effort. Show public
+  summaries as separated history blocks while hiding live code and tool output;
+  preserve final answers and original user input.
+
 ## [0.1.2] - 2026-10-23
 
 - Keep the active panel below new owner messages: Start/Menu, text and media

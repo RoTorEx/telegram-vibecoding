@@ -5,6 +5,7 @@ import io
 import json
 import logging
 import os
+import re
 import signal
 import time
 import uuid
@@ -168,16 +169,22 @@ class BotRuntime:
                 sid = self.store.get("selected")
                 if sid:
                     await self.engine.call(f"/sessions/{sid}/stop", {})
-                    self.store.set("notice", "Stop requested.")
-                    if dialog_manager.has_context():
-                        await dialog_manager.show(ShowMode.EDIT)
-                    else:
-                        await open_screen(dialog_manager, Screens.deck)
+                if not dialog_manager.has_context():
+                    await open_screen(dialog_manager, Screens.deck)
+                self.store.set("notice", "Stop requested." if sid else "No session selected.")
+                await dialog_manager.show(ShowMode.EDIT)
             elif command == "/help":
                 await open_screen(dialog_manager, Screens.deck)
             else:
                 screen = {"/sessions": Screens.sessions, "/new": Screens.sessions}.get(command, Screens.deck)
                 await open_screen(dialog_manager, screen)
+
+        @controls.message(F.text.regexp(r"^/[A-Za-z][A-Za-z0-9_]*(?:@\w+)?(?:\s|$)"))
+        async def unknown_command(message: Message, dialog_manager: DialogManager):
+            if not dialog_manager.has_context():
+                await open_screen(dialog_manager, Screens.deck)
+            self.store.set("notice", "Unknown command. Use the buttons or /menu.")
+            await dialog_manager.show(ShowMode.EDIT)
 
         @controls.callback_query(F.data.startswith("open:"))
         async def open_session(callback: CallbackQuery, dialog_manager: DialogManager):
@@ -359,9 +366,15 @@ class BotRuntime:
 
     @staticmethod
     def is_control(body: dict) -> bool:
-        return bool(body.get("callback_query")) or (
-            body.get("message", {}).get("text", "").split(" ", 1)[0].split("@")[0]
-            in {"/start", "/menu", "/sessions", "/new", "/stop", "/help"}
+        text = body.get("message", {}).get("text", "")
+        token = (text.split() or [""])[0].split("@")[0]
+        return (
+            bool(body.get("callback_query"))
+            or token in {"/start", "/menu", "/sessions", "/new", "/stop", "/help"}
+            or (
+                not body.get("_relay", {}).get("input_action")
+                and bool(re.match(r"^/[A-Za-z][A-Za-z0-9_]*(?:@\w+)?(?:\s|$)", text))
+            )
         )
 
     async def process_control(self, row: dict):
@@ -488,7 +501,7 @@ class BotRuntime:
         elif row["mode"] != "chat" or not row["session_id"]:
             self.store.set("notice", "Open Location from Main Deck, then choose or start a session.")
             if not await self.refresh_panel():
-                await self.send("Open Location from Main Deck, then choose or start a session.")
+                await self.initialize_panel()
         else:
             sid = row["session_id"]
             messages = [b["message"] for b in bodies]
@@ -516,6 +529,7 @@ class BotRuntime:
                 if self.store.get("selected") == sid:
                     self.store.set("history_anchor", "")
                     self.store.set("history_part", "-1")
+                    await self.refresh_panel()
         for r in rows:
             self.store.processed(r["id"])
 
@@ -577,7 +591,14 @@ class BotRuntime:
             try:
                 events = await self.engine.call("/events?after=" + self.store.get("event_cursor", "0"))
                 for event in events:
-                    if event["kind"] in {"user", "message", "error", "completed", "question"}:
+                    if event["kind"] in {
+                        "user",
+                        "message",
+                        "reasoning_summary",
+                        "error",
+                        "completed",
+                        "question",
+                    }:
                         self.queue_update(event)
                     else:
                         self.store.queue_event(event["id"], [], None)
@@ -702,6 +723,15 @@ class BotRuntime:
     async def process_navigation(self, row: dict):
         if self.is_control(json.loads(row["body"])):
             await self.process_control(row)
+        elif row["mode"] != "input":
+            # Message delivery acquires its own UI lock when rendering its receipt.
+            try:
+                await self.process_messages([row])
+            except ValueError as exc:
+                self.store.set("notice", str(exc)[:1000])
+                if not await self.refresh_panel():
+                    await self.initialize_panel()
+                self.store.processed(row["id"])
         else:
             async with self.ui_lock:
                 try:

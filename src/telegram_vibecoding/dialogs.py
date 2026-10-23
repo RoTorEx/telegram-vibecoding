@@ -12,7 +12,7 @@ from aiogram_dialog.widgets.style import Style
 from aiogram_dialog.widgets.text import Const, Format
 
 from telegram_vibecoding import __version__
-from telegram_vibecoding.presentation import conversation_parts, curated_models, timestamp
+from telegram_vibecoding.presentation import activity_label, conversation_parts, curated_models, timestamp
 
 
 class Screens(StatesGroup):
@@ -125,6 +125,8 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
         v["history_previous"] = part > 0 or conversation["previous"] is not None
         v["history_next"] = part + 1 < len(parts) or conversation["next"] is not None
         header = f"💬 {session['name'][:100]} · {session['status']}"
+        if live:
+            header += "\n" + activity_label(live, session["effort"])
         if conversation["total"]:
             header += f"\nExchange {conversation['index']}/{conversation['total']}"
         if len(parts) > 1:

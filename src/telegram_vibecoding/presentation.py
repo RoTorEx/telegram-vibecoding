@@ -1,10 +1,43 @@
 """Lossless Telegram splitting and compact, host-aware session labels."""
 
 import re
+import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 PART_UNITS = 3500
+
+
+def progress_prose(text: str) -> str:
+    """Render public progress prose without code blocks, inline code or shell output."""
+    lines = []
+    fence = None
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith(("```", "~~~")):
+            marker = stripped[:3]
+            fence = None if fence == marker else marker if fence is None else fence
+            continue
+        if fence or line.startswith(("    ", "\t")):
+            continue
+        if re.match(
+            r"^(?:[$%>]\s|>>>|@@|diff --git|[+][^ ]|#!|"
+            r"(?:sudo|cd|ls|rg|git|npm|pnpm|yarn|uv|pip|python\d*|bash|sh|curl|docker)\s|"
+            r"(?:def|class|import|from|function|const|let|var|return)\s|[{}];?$)",
+            stripped,
+        ):
+            continue
+        lines.append(re.sub(r"`+[^`\n]*(?:`+|$)", "", line))
+    return "\n".join(lines).strip()
+
+
+def activity_label(live: dict, effort: str, now: float | None = None) -> str:
+    clock = time.time() if now is None else now
+    elapsed = max(0, int(clock - live.get("started", clock)))
+    waiting = live.get("activity") == "Waiting for your answer"
+    icon = "❔" if waiting else "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"[int(clock / 2) % 10]
+    label = "Waiting for your answer" if waiting else "Working"
+    return f"{icon} {label} · {elapsed // 60:02}:{elapsed % 60:02} elapsed · Reasoning: {effort}"
 
 
 def timestamp(value: float | None) -> str:
@@ -36,10 +69,24 @@ def conversation_parts(conversation: dict, live: dict | None = None) -> list[str
     if images:
         prompt += f"\n[Images: {images}]"
     replies = []
+    progress = False
+
+    def append_progress(text, label="Reasoning"):
+        nonlocal progress
+        if prose := progress_prose(text):
+            replies.append("────────\n" + label + "\n" + prose)
+            progress = True
+
     for event in conversation["replies"]:
         p = event["payload"]
-        if event["kind"] == "message":
-            replies.append(p.get("text", ""))
+        if event["kind"] == "reasoning_summary":
+            for part in p.get("parts") or [p.get("text", "")]:
+                append_progress(part)
+        elif event["kind"] == "message":
+            if p.get("phase") == "commentary":
+                append_progress(p.get("text", ""), "Progress")
+            else:
+                replies.append(("────────\nAnswer\n" if progress else "") + p.get("text", ""))
         elif event["kind"] == "error":
             replies.append("⚠️ " + p.get("text", "Unknown error"))
         elif event["kind"] == "question":
@@ -55,7 +102,9 @@ def conversation_parts(conversation: dict, live: dict | None = None) -> list[str
             error = p.get("error") or {}
             replies.append(p.get("text") or error.get("message") or p["status"].capitalize())
     if live:
-        replies.append(live.get("text") or live.get("activity", "Working…"))
+        for parts in live.get("summaries", {}).values():
+            for key in sorted(parts, key=int):
+                append_progress(parts[key])
     body = "You\n" + prompt + "\n\nCodex\n" + ("\n\n".join(replies) or "Waiting for a response…")
     return split_text(body, 3200)
 

@@ -767,3 +767,79 @@ async def test_failed_old_panel_cleanup_does_not_repeat_successful_send(app):
     assert old not in transport.messages
     assert len(transport.messages) == 1
     assert runtime.store.get("retired_panels") == "[]"
+
+
+async def test_every_command_and_plain_menu_input_moves_the_current_panel(app):
+    runtime, transport, engine, native = app
+    await runtime.initialize_panel()
+    for text in ["/menu", "/help", "/sessions", "/new", "/stop", "/unknown", "ordinary menu input"]:
+        previous = int(runtime.store.get("panel_id"))
+        await command(app, text)
+        current = int(runtime.store.get("panel_id"))
+        assert current > int(runtime.store.get("last_user_message_id"))
+        assert previous not in transport.messages
+        assert len(transport.messages) == 1
+        exits(transport)
+    assert not native.calls
+
+
+async def test_absolute_directory_input_is_not_mistaken_for_an_unknown_command(app):
+    runtime, transport, engine, native = app
+    await command(app, "/start")
+    await click(app, "📍 Location")
+    await click(app, "📂 Other location")
+    await command(app, "/tmp")
+    assert runtime.store.get("location") == "/private/tmp" or runtime.store.get("location") == "/tmp"
+    assert "Unknown command" not in panel(transport).text
+    assert not native.calls
+
+
+async def test_live_feedback_animates_public_summaries_without_tool_or_code_output(app, monkeypatch):
+    from telegram_vibecoding import presentation
+
+    runtime, transport, engine, native = app
+    await command(app, "/start")
+    await click(app, "📍 Location")
+    await click(app, "1")
+    await click(app, "➕ New session")
+    sid = runtime.store.get("selected")
+    await command(app, "Perform the task")
+    await settle(engine)
+    session = engine.store.session(sid)
+    thread = session["thread_id"]
+    engine.live[sid]["started"] = 100
+    engine.on_event("item/agentMessage/delta", {"threadId": thread, "delta": "LIVE_CODE_MUST_BE_HIDDEN"})
+    engine.on_event("item/commandExecution/outputDelta", {"threadId": thread, "delta": "TOOL_OUTPUT_PRIVATE"})
+    engine.on_event(
+        "item/reasoning/summaryTextDelta",
+        {
+            "threadId": thread,
+            "itemId": "r1",
+            "summaryIndex": 0,
+            "delta": "Checking behavior.\n```sh\nprintf SECRET_CODE\n```\nThen verifying recovery.\n$ sudo SECRET_COMMAND",
+        },
+    )
+    monkeypatch.setattr(presentation.time, "time", lambda: 110)
+    await runtime.refresh_panel()
+    identity = runtime.store.get("panel_id")
+    before = panel(transport).text
+    assert "00:10 elapsed" in before
+    assert "Reasoning: medium" in before
+    assert "Checking behavior." in before and "Then verifying recovery." in before
+    assert all(s not in before for s in ["SECRET_CODE", "SECRET_COMMAND", "LIVE_CODE", "TOOL_OUTPUT"])
+    monkeypatch.setattr(presentation.time, "time", lambda: 112)
+    await runtime.refresh_panel()
+    after = panel(transport).text
+    assert after != before and "00:12 elapsed" in after
+    assert runtime.store.get("panel_id") == identity
+    engine.on_event(
+        "item/completed",
+        {"threadId": thread, "item": {"id": "r1", "type": "reasoning", "summary": ["Checked behavior."]}},
+    )
+    native.finish(thread, text="Final answer")
+    await runtime.refresh_panel()
+    completed = panel(transport).text
+    assert "elapsed" not in completed
+    assert completed.index("Reasoning\nChecked behavior.") < completed.index("Answer\nFinal answer")
+    assert "────────" in completed
+    assert len(transport.messages) == 1

@@ -64,3 +64,17 @@ when this repository is released. API protocol compatibility is separate from
 product versions. Follow the local Kernel release contract through make release
 and make release-push. Source package version, built metadata, CLI and runtime
 version reports must agree.
+
+## Active work display
+
+The one-panel positioning rule applies to every owner message and command,
+including plain menu input, attachments, input steps and Stop without a session.
+Unknown bot commands stay in the interface instead of reaching an agent; absolute
+directory input remains valid. Accepted agent input refreshes the panel promptly.
+
+While a turn is active, animate a compact working indicator with elapsed time
+and the configured reasoning effort. Never invent remaining time. Show only
+public native summaries and code-free progress prose, separated chronologically
+above the finished answer. Hide command/tool output, diffs and code blocks from
+progress. Do not display raw reasoning. Final answers and original user prompts
+remain intact. Completed summaries stay browsable in the paginated history.
