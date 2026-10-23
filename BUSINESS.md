@@ -50,3 +50,12 @@ Integration tests use the sibling Core checkout; runtime packaging does not.
 Restarting/updating this container must not restart Core or native agent work.
 The accepted bot is @GardenSandbox_bot, displayed as Telegram Vibecoding.
 Voice and additional hosts are later stages. No subagents.
+
+## Independent versioning
+
+This component owns its semantic version, changelog, release commit and annotated
+vMAJOR.MINOR.PATCH tag. The sibling version and deployment revision do not change
+when this repository is released. API protocol compatibility is separate from
+product versions. Follow the local Kernel release contract through make release
+and make release-push. Source package version, built metadata, CLI and runtime
+version reports must agree.

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "telegram-vibecoding"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Private Telegram interface for Remote Vibecoding."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -32,3 +32,9 @@ python_version = "3.13"
 files = ["src"]
 check_untyped_defs = true
 ignore_missing_imports = true
+
+[tool.hatch.version]
+path = "src/telegram_vibecoding/__init__.py"
+
+[tool.uv]
+cache-keys = [{ file = "pyproject.toml" }, { file = "src/telegram_vibecoding/__init__.py" }]

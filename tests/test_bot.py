@@ -653,3 +653,25 @@ def test_container_readiness_rejects_previous_boot_even_when_pid_is_reused(tmp_p
     store.set("bot_instance", "new-container")
     assert healthy(settings, instance)
     store.close()
+
+
+async def test_settings_reports_each_running_component_version_independently(app):
+    from telegram_vibecoding import __version__
+
+    runtime, transport, engine, native = app
+    original = runtime.engine.call
+
+    async def call(path, body=None):
+        if path == "/health":
+            return {"version": "2.7.4"}
+        return await original(path, body)
+
+    runtime.engine.call = call
+    await command(app, "/start")
+    identity = runtime.store.get("panel_id")
+    await click(app, "⚙️ Settings")
+    assert f"Telegram: {__version__}" in panel(transport).text
+    assert "Core: 2.7.4" in panel(transport).text
+    exits(transport)
+    await click(app, "⬅️ Back")
+    assert runtime.store.get("panel_id") == identity

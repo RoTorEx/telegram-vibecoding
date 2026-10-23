@@ -11,6 +11,7 @@ from aiogram_dialog.widgets.kbd import Button, Group, Row, Select
 from aiogram_dialog.widgets.style import Style
 from aiogram_dialog.widgets.text import Const, Format
 
+from telegram_vibecoding import __version__
 from telegram_vibecoding.presentation import conversation_parts, curated_models, timestamp
 
 
@@ -171,7 +172,11 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
             f"Disk free: {details['disk_free'] / 1024**3:.1f} / {details['disk_total'] / 1024**3:.1f} GiB"
         )
     elif screen == Screens.settings:
-        v["text"] = f"⚙️ Settings\n\nMachine: {app.settings.host_id}\nDefault location: Home\nAgent: Codex"
+        health = await app.engine.call("/health")
+        v["text"] = (
+            f"⚙️ Settings\n\nMachine: {app.settings.host_id}\nDefault location: Home\nAgent: Codex"
+            f"\n\nTelegram: {__version__}\nCore: {health['version']}"
+        )
         if session:
             v["text"] += (
                 f"\n\nSelected session: {session['name']}\nModel, reasoning and Plan mode are in its Config."

@@ -15,6 +15,12 @@ fmt:
 	$(UV) run --frozen ruff check --fix src tests scripts
 	$(UV) run --frozen ruff format src tests scripts
 
+.PHONY: release release-push
+release:
+	$(UV) run --frozen python scripts/release.py
+release-push:
+	$(UV) run --frozen python scripts/release.py --push
+
 .PHONY: vibe-kernel-path vibe-kernel-set vibe-pull
 
 vibe-kernel-path:
