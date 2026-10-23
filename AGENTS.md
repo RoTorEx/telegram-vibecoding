@@ -37,11 +37,10 @@ This project uses committed local copies of the Vibecoding Kernel.
 ## Project routing
 
 - Work personally, without subagents.
-- Read BUSINESS.md before changing conversation or navigation behavior.
-- Read docs/architecture.md for persistence, transport, and recovery.
-- Read docs/operations.md before installation, deployment, backup, or rollback.
-- Run make check; exercise meaningful lifecycle and routing behavior.
-- Bot deployment must never restart the engine. Agent turns have full host access
-  by explicit owner choice; do not introduce prompt rewriting or execution gates.
-- Keep credentials, Codex history, and runtime databases outside Git and logs.
-- Write code and project artifacts in English.
+- This repository owns Telegram Vibecoding; the sibling repository owns the other component.
+- Read BUSINESS.md and the relevant docs before changing behavior or deployment.
+- Run make check. Production code must not import the sibling implementation.
+- Preserve native session identity, durable queues, full alex host access and
+  independent bot updates. Never add model prompts or execution approval gates.
+- Keep credentials and runtime state outside Git and logs.
+- Write project artifacts in English.

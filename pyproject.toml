@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "telegram-vibecoding"
+version = "0.1.0"
+description = "Private Telegram interface for Remote Vibecoding."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = ["aiogram>=3.13,<4", "aiogram-dialog>=2.5,<3", "aiohttp>=3.10,<4"]
+
+[project.scripts]
+telegram-vibecoding = "telegram_vibecoding.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "pytest-asyncio>=0.25,<2", "ruff>=0.12,<1", "mypy>=1.15,<2"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.13"
+files = ["src"]
+check_untyped_defs = true
+ignore_missing_imports = true
+
