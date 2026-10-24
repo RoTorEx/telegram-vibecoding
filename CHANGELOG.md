@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.16] - 2026-10-24
+
 - Replace role filters and the image gallery button with a dedicated chapter/page history reader, including inline request-scoped images and continuous page navigation.
 - Restore Config beside Details and keep Chat history/Stop and Back/Deck as the remaining main session rows.
 - Include elapsed work time and Open session in completion notices; keep the active panel below standalone notifications and file deliveries.
