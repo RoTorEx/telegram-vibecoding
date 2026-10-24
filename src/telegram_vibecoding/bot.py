@@ -107,11 +107,15 @@ class PanelMessages(MessageManager):
             published = int(self.app.store.get("panel_id", "0"))
             if old_message and published > old_message.message_id:
                 old_message = replace(old_message, message_id=published, text=None)
-            if old_message and old_message.message_id < int(self.app.store.get("last_user_message_id", "0")):
+            if old_message and (
+                self.app.restart_pending
+                or old_message.message_id < int(self.app.store.get("last_user_message_id", "0"))
+            ):
                 # Editing preserves Telegram chronology. Publish below new input first.
                 await self.app.throttle()
                 sent = await super().show_message(bot, replace(new_message, show_mode=ShowMode.SEND), None)
                 self.app.store.set("panel_id", str(sent.message_id))
+                self.app.panel_published(new_message.text)
                 retired = json.loads(self.app.store.get("retired_panels", "[]"))
                 self.app.store.set("retired_panels", json.dumps([*retired, old_message.message_id]))
                 log.info(
@@ -126,12 +130,17 @@ class PanelMessages(MessageManager):
                 await self.app.throttle()
             sent = await super().show_message(bot, new_message, old_message)
             self.app.store.set("panel_id", str(sent.message_id))
+            self.app.panel_published(new_message.text)
             return sent
 
 
 class BotRuntime:
     def __init__(self, settings: Settings, bot=None, engine=None):
         self.settings = settings
+        self.read_requested = False
+        self.view_receipt: tuple[str, int] | None = None
+        self.receipt_text = ""
+        self.restart_pending = False
         instance_file = Path("/tmp/telegram-vibecoding-instance")
         self.instance = instance_file.read_text().strip() if instance_file.exists() else uuid.uuid4().hex
         settings.prepare()
@@ -325,6 +334,27 @@ class BotRuntime:
                     except TelegramRetryAfter as exc:
                         await asyncio.sleep(exc.retry_after)
         return last
+
+    def panel_published(self, text: str | None) -> None:
+        if self.read_requested and self.view_receipt and self.receipt_text == text:
+            self.store.mark_viewed(*self.view_receipt)
+        self.read_requested = False
+        self.view_receipt = None
+        if self.restart_pending:
+            self.store.set("restart_sent", self.instance)
+            self.restart_pending = False
+
+    async def startup_panel(self) -> None:
+        self.restart_pending = self.store.get("restart_sent") != self.instance
+        if self.restart_pending:
+            from telegram_vibecoding import __version__
+            from telegram_vibecoding.presentation import timestamp
+
+            self.store.set("notice", f"🔄 {BOT_NAME} restarted · {__version__}\n" + timestamp(time.time()))
+        if self.store.get("screen"):
+            await self.refresh_panel()
+        else:
+            await self.initialize_panel()
 
     async def question(self, qid: str) -> dict:
         # Persisted delivery metadata binds a button to its original session.
@@ -679,7 +709,11 @@ class BotRuntime:
                     live = await self.engine.call("/live")
                     if self.store.get("selected") in live:
                         await self.refresh_panel()
-                elif self.store.get("screen") == Screens.sessions.state:
+                elif self.store.get("screen") in {
+                    Screens.sessions.state,
+                    Screens.deck.state,
+                    Screens.journal.state,
+                }:
                     now = time.monotonic()
                     if now - self.last_list_refresh >= 5:
                         await self.refresh_panel()
@@ -726,10 +760,7 @@ class BotRuntime:
                 if "chat not found" not in str(exc).lower():
                     raise
         try:
-            if self.store.get("screen"):
-                await self.refresh_panel()
-            else:
-                await self.initialize_panel()
+            await self.startup_panel()
         except TelegramForbiddenError:
             # A fresh bot cannot initiate a chat before its owner presses Start.
             log.info("Waiting for the owner to start the private chat")

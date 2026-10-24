@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Add Main Deck unread-result counts and a paginated Journal with durable explicit-view acknowledgements.
+- Notify the owner on bot restart while preserving the selected session and single-panel navigation.
+
 ## [0.1.8] - 2026-10-24
 
 - Hide untouched empty session drafts from location lists while preserving their records and history.

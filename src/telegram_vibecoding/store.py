@@ -46,6 +46,8 @@ class BotStore(Database):
     def __init__(self, path: Path):
         super().__init__(path)
         self.db.executescript("""
+            CREATE TABLE IF NOT EXISTS session_reads(
+                session_id TEXT PRIMARY KEY, completion_id INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS inbox(
                 id INTEGER PRIMARY KEY, body TEXT NOT NULL, session_id TEXT, mode TEXT NOT NULL,
@@ -101,4 +103,16 @@ class BotStore(Database):
             self.db.execute(
                 "INSERT INTO meta VALUES('event_cursor',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 (str(event_id),),
+            )
+
+    def viewed(self, sid: str) -> int:
+        row = self.one("SELECT completion_id FROM session_reads WHERE session_id=?", (sid,))
+        return row["completion_id"] if row else 0
+
+    def mark_viewed(self, sid: str, completion_id: int) -> None:
+        with self.db:
+            self.db.execute(
+                "INSERT INTO session_reads VALUES (?,?) ON CONFLICT(session_id) DO UPDATE "
+                "SET completion_id=MAX(session_reads.completion_id,excluded.completion_id)",
+                (sid, completion_id),
             )

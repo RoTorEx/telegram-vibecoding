@@ -109,3 +109,25 @@ reopening formatting on every page. Escape session names, paths, errors, typed
 prompts and transcripts. All menus retain their normal buttons; formatting never
 changes callbacks, session identity or original history. Disable link previews
 to keep the single panel compact. Older answers are formatted when reopened.
+
+## Unread-results journal and restart notices
+
+Main Deck shows running/waiting counts and an always-visible Journal button with
+the number of non-closed sessions having a finished outcome not explicitly
+viewed by the owner. Journal lists up to ten results per page across locations,
+newest first. Busy sessions leave the finished-results list until they finish.
+Failures and interruptions can also require attention.
+
+An outcome becomes viewed only after an owner navigation opens its latest chat
+page, or Latest/Next reaches that page, and Telegram successfully accepts the
+panel. Opening Journal/Config/Details, browsing older history and background
+updates never acknowledge it. Telegram supplies no user read receipts to this
+bot. Per-session completion cursors persist in bot.db, advance monotonically and
+acknowledge only the displayed event; a later completion stays unread. On first
+upgrade retained unacknowledged results are visible rather than silently read.
+
+Every process boot publishes a new panel carrying a short restarted notice with
+version and Warsaw time, then retires the prior bot panel. Preserve the selected
+session/view and all native work. One successful publication marks that boot's
+notice delivered; retries do not republish an already accepted notice. No owner
+messages are removed and restarting the interface does not mark results viewed.

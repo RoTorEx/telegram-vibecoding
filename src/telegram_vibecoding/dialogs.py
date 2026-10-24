@@ -25,6 +25,7 @@ from telegram_vibecoding.presentation import (
 class Screens(StatesGroup):
     deck = State()
     locations = State()
+    journal = State()
     sessions = State()
     chat = State()
     config = State()
@@ -58,6 +59,27 @@ def numbered(app, screen, entries, describe) -> tuple[str, list, bool, bool]:
     return text, rows, page > 0, (page + 1) * 10 < len(entries)
 
 
+def working(session: dict) -> bool:
+    return bool(session.get("turn_id")) or session["status"] in {
+        "connecting",
+        "working",
+        "transcribing",
+        "waiting",
+    }
+
+
+def unread(app, sessions: list[dict]) -> list[dict]:
+    return sorted(
+        [
+            s
+            for s in sessions
+            if not working(s) and (s.get("last_completed_event") or 0) > app.store.viewed(s["id"])
+        ],
+        key=lambda s: s["last_completed_event"],
+        reverse=True,
+    )
+
+
 async def data(dialog_manager: DialogManager, **_) -> dict:
     app = runtime(dialog_manager)
     screen = dialog_manager.current_context().state
@@ -68,6 +90,7 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
     v: dict[str, Any] = {
         "text": "",
         "rows": [],
+        "journal_label": "📒 Journal",
         "has_session_context": bool(session)
         and (
             screen in {Screens.chat, Screens.config, Screens.details, Screens.models}
@@ -85,13 +108,26 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
     }
     if screen == Screens.deck:
         sessions = await app.engine.call("/sessions")
-        working = sum(bool(s["turn_id"]) for s in sessions)
+        active = sum(working(s) for s in sessions)
+        pending = len(unread(app, sessions))
+        v["journal_label"] = f"📒 Journal ({pending})"
         waiting = sum(s["status"] == "waiting" for s in sessions)
         v["text"] = (
             f"👽 Main Deck\n\nMachine: {app.settings.host_id}\nLocation: {place['name']}\n{place['path']}"
         )
-        if working or waiting:
-            v["text"] += f"\n\nWorking: {working} · Waiting: {waiting}"
+        v["text"] += f"\n\nWorking: {active} · Waiting: {waiting}\nUnread results: {pending}"
+    elif screen == Screens.journal:
+        sessions = unread(app, await app.engine.call("/sessions"))
+        projects = {p["path"]: p["name"] for p in await app.engine.call("/projects")}
+        listing, v["rows"], v["previous_page"], v["next_page"] = numbered(
+            app,
+            screen,
+            sessions,
+            lambda s: session_label(s) + " · " + projects.get(s["cwd"], Path(s["cwd"]).name),
+        )
+        v["text"] = f"📒 Journal\n\nUnread results: {len(sessions)}\n\n" + (
+            listing or "No unread results. Opened results leave this journal."
+        )
     elif screen == Screens.locations:
         projects = await app.engine.call("/projects")
         projects.sort(key=lambda p: (p["name"] != "Home", p["name"].lower()))
@@ -216,6 +252,17 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
         app.store.set("model_catalog", json.dumps(models))
         v["rows"] = [(m.get("displayName") or m["id"], m["id"]) for m in models]
         v["text"] = f"🧠 Model · {session['name']}\n\nLatest available Sol and up to two latest Astra models."
+    app.view_receipt = None
+    if (
+        app.read_requested
+        and screen == Screens.chat
+        and session
+        and not conversation["next"]
+        and part == len(parts) - 1
+    ):
+        completion = max((e["id"] for e in conversation["replies"] if e["kind"] == "completed"), default=0)
+        if completion:
+            app.view_receipt = (sid, completion)
     if screen != Screens.locations and (screen != Screens.chat or not session):
         v["text"] = escape(v["text"])
     v["has_pages"] = v["previous_page"] or v["next_page"]
@@ -227,6 +274,7 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
             v["text"] = (
                 "⚠️ " + escape(notice) + "\n\nUse Latest or Back to continue. Your conversation is retained."
             )
+    app.receipt_text = v["text"]
     return v
 
 
@@ -249,6 +297,7 @@ async def go(manager: DialogManager, screen: State, *, remember=True) -> None:
         "mode", "input" if screen == Screens.input else "chat" if screen == Screens.chat else "menu"
     )
     app.store.set("screen", screen.state)
+    app.read_requested = screen == Screens.chat
     app.store.set("input_action", app.store.get("input_kind") if screen == Screens.input else "")
     await manager.switch_to(screen, show_mode=ShowMode.EDIT)
 
@@ -269,6 +318,10 @@ async def back(c, b, manager):
 
 async def locations(c, b, manager):
     await go(manager, Screens.locations)
+
+
+async def journal(c, b, manager):
+    await go(manager, Screens.journal)
 
 
 async def settings(c, b, manager):
@@ -331,6 +384,7 @@ async def page(c, b, manager):
 
 async def history(c, b, manager):
     app = runtime(manager)
+    app.read_requested = True
     view = json.loads(app.store.get("history_view", "{}"))
     if b.widget_id == "latest":
         app.store.set("history_anchor", "")
@@ -484,8 +538,18 @@ def make_dialog() -> Dialog:
             LinkPreview(is_disabled=True),
             Button(Const("⚙️ Settings"), id="settings", on_click=settings),
             Button(Const("📍 Location"), id="locations", on_click=locations),
+            Button(Format("{journal_label}"), id="journal", on_click=journal),
             navigation(with_config=False),
             state=Screens.deck,
+            parse_mode="HTML",
+        ),
+        Window(
+            Format("{text}"),
+            LinkPreview(is_disabled=True),
+            numbered_picker(choose_session),
+            list_pages(),
+            navigation(with_config=False),
+            state=Screens.journal,
             parse_mode="HTML",
         ),
         Window(
@@ -597,6 +661,7 @@ async def open_screen(manager: DialogManager, screen: State) -> None:
     app.store.set("notice", "")
     app.store.set("mode", "chat" if screen == Screens.chat else "menu")
     app.store.set("screen", screen.state)
+    app.read_requested = screen == Screens.chat
     app.store.set("input_action", "")
     app.store.set(
         "trail",

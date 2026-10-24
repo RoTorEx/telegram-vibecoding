@@ -1116,3 +1116,139 @@ async def test_followups_steer_active_turn_and_project_navigation_keeps_targets(
     assert [p for method, p in native.calls if method == "turn/steer"][-1]["threadId"] == before["thread_id"]
     assert not any(method == "turn/interrupt" for method, _ in native.calls)
     assert len([1 for method, _ in native.calls if method == "turn/start"]) == 2
+
+
+async def test_journal_counts_finished_sessions_until_explicitly_opened(app, host):
+    runtime, transport, engine, native = app
+    await command(app, "/start")
+    a = engine.store.create_session(str(host[0].data_dir.parent), "Unread A", "medium")
+    b = engine.store.create_session(str(host[0].data_dir.parent), "Unread B", "medium")
+    for session in [a, b]:
+        engine.store.event(session["id"], "user", {"text": "Work"})
+        engine.store.event(session["id"], "message", {"text": "Finished"})
+        engine.store.event(session["id"], "completed", {"status": "completed"})
+    await runtime.refresh_panel()
+    await click(app, "📒 Journal (2)")
+    assert "Unread results: 2" in panel(transport).text
+    assert "Unread A" in panel(transport).text and "Unread B" in panel(transport).text
+    assert runtime.store.viewed(a["id"]) == runtime.store.viewed(b["id"]) == 0
+    await click(app, "1")
+    selected = runtime.store.get("selected")
+    assert runtime.store.viewed(selected) > 0
+    await click(app, "👽 Deck")
+    await click(app, "📒 Journal (1)")
+    assert "Unread results: 1" in panel(transport).text
+    await click(app, "1")
+    assert runtime.store.viewed(a["id"]) > 0 and runtime.store.viewed(b["id"]) > 0
+    await click(app, "👽 Deck")
+    await click(app, "📒 Journal (0)")
+    assert "No unread results" in panel(transport).text
+
+
+async def test_background_completion_does_not_mark_read_and_latest_acknowledges(app):
+    runtime, transport, engine, native = app
+    await command(app, "/start")
+    await click(app, "📍 Location")
+    await click(app, "1")
+    await click(app, "➕ New session")
+    sid = runtime.store.get("selected")
+    engine.store.event(sid, "user", {"text": "Work"})
+    engine.store.event(sid, "message", {"text": "Result"})
+    first = engine.store.event(sid, "completed", {"status": "completed"})
+    await runtime.refresh_panel()
+    assert runtime.store.viewed(sid) == 0
+    await click(app, "Latest")
+    assert runtime.store.viewed(sid) == first
+    engine.store.event(sid, "user", {"text": "More work"})
+    engine.store.event(sid, "message", {"text": "New result"})
+    second = engine.store.event(sid, "completed", {"status": "completed"})
+    await runtime.refresh_panel()
+    assert runtime.store.viewed(sid) == first < second
+    await click(app, "◀")
+    assert runtime.store.viewed(sid) == first
+    await click(app, "Latest")
+    assert runtime.store.viewed(sid) == second
+    from telegram_vibecoding.store import BotStore
+
+    reopened = BotStore(runtime.settings.data_dir / "bot.db")
+    assert reopened.viewed(sid) == second
+    reopened.close()
+
+
+async def test_restart_notice_publishes_once_per_boot_preserving_selected_view(app):
+    runtime, transport, engine, native = app
+    await command(app, "/start")
+    await click(app, "📍 Location")
+    await click(app, "1")
+    await click(app, "➕ New session")
+    sid = runtime.store.get("selected")
+    old = runtime.store.get("panel_id")
+    await runtime.startup_panel()
+    latest = runtime.store.get("panel_id")
+    assert latest != old
+    assert runtime.store.get("selected") == sid
+    assert "Telegram Vibecoding restarted" in panel(transport).text
+    assert "Warsaw" in panel(transport).text
+    assert runtime.store.get("restart_sent") == runtime.instance
+    count = sum(isinstance(call, SendMessage) for call in transport.calls)
+    await runtime.startup_panel()
+    assert runtime.store.get("panel_id") == latest
+    assert sum(isinstance(call, SendMessage) for call in transport.calls) == count
+    runtime.instance = "new-boot"
+    await runtime.startup_panel()
+    assert runtime.store.get("panel_id") != latest
+    assert len(transport.messages) == 1
+    assert not native.calls
+
+
+async def test_new_completion_during_publication_stays_unread(app):
+    runtime, transport, engine, native = app
+    await command(app, "/start")
+    await click(app, "📍 Location")
+    await click(app, "1")
+    await click(app, "➕ New session")
+    sid = runtime.store.get("selected")
+    engine.store.event(sid, "user", {"text": "Work"})
+    engine.store.event(sid, "message", {"text": "First result"})
+    first = engine.store.event(sid, "completed", {"status": "completed"})
+    original = transport.make_request
+    later = []
+
+    async def completing(bot, method, timeout=None):
+        result = await original(bot, method, timeout)
+        if isinstance(method, EditMessageText) and "First result" in method.text and not later:
+            engine.store.event(sid, "user", {"text": "Another request"})
+            engine.store.event(sid, "message", {"text": "Second result"})
+            later.append(engine.store.event(sid, "completed", {"status": "completed"}))
+        return result
+
+    transport.make_request = completing
+    await click(app, "Latest")
+    assert later and runtime.store.viewed(sid) == first < later[0]
+    await click(app, "👽 Deck")
+    assert "Unread results: 1" in panel(transport).text
+
+
+async def test_failed_restart_send_preserves_panel_and_retries_same_boot(app):
+    from aiogram.exceptions import TelegramNetworkError
+
+    runtime, transport, engine, native = app
+    await command(app, "/start")
+    old = runtime.store.get("panel_id")
+    original = transport.make_request
+
+    async def unavailable(bot, method, timeout=None):
+        if isinstance(method, SendMessage):
+            raise TelegramNetworkError(method=method, message="offline")
+        return await original(bot, method, timeout)
+
+    transport.make_request = unavailable
+    with pytest.raises(TelegramNetworkError):
+        await runtime.startup_panel()
+    assert runtime.store.get("panel_id") == old
+    assert runtime.store.get("restart_sent") != runtime.instance
+    transport.make_request = original
+    await runtime.startup_panel()
+    assert runtime.store.get("panel_id") != old
+    assert runtime.store.get("restart_sent") == runtime.instance
+    assert len(transport.messages) == 1
