@@ -12,6 +12,7 @@ import uuid
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from dataclasses import asdict, replace
+from html import escape
 from pathlib import Path
 from typing import Any
 
@@ -110,7 +111,11 @@ class PanelMessages(MessageManager):
                 old_message = replace(old_message, message_id=published, text=None)
             if old_message and (
                 self.app.restart_pending
-                or old_message.message_id < int(self.app.store.get("last_user_message_id", "0"))
+                or old_message.message_id
+                < max(
+                    int(self.app.store.get("last_user_message_id", "0")),
+                    int(self.app.store.get("last_notice_message_id", "0")),
+                )
             ):
                 # Editing preserves Telegram chronology. Publish below new input first.
                 await self.app.throttle()
@@ -297,10 +302,9 @@ class BotRuntime:
     async def render_panel(self):
         bg = self.background.bg(self.bot, self.settings.allowed_user_id, self.settings.allowed_user_id)
         async with foreground(bg) as manager:
-            if manager.current_context().state == Screens.config and self.store.get("selected"):
-                self.store.set("mode", "chat")
-                self.store.set("screen", Screens.chat.state or "")
-                await manager.switch_to(Screens.chat, show_mode=ShowMode.EDIT)
+            if manager.current_context().state == Screens.images:
+                self.store.set("history_part", "0")
+                await manager.switch_to(Screens.history, show_mode=ShowMode.EDIT)
             await manager.show(ShowMode.EDIT)
 
     @staticmethod
@@ -373,6 +377,7 @@ class BotRuntime:
                     # Acknowledge the standalone send before refreshing the replaceable panel.
                     self.store.set("restart_notice_id", str(sent.message_id))
                     self.store.set("restart_notice_text", text)
+                    self.store.set("last_notice_message_id", str(sent.message_id))
                     self.store.set("restart_sent", self.instance)
                     log.info("Startup notification accepted: message=%s", sent.message_id)
             if self.store.get("screen"):
@@ -817,12 +822,14 @@ class BotRuntime:
             raise ValueError("Image exceeds 20 MB")
 
         async def publish():
-            return await self.bot.send_document(
+            sent = await self.bot.send_document(
                 self.settings.allowed_user_id,
                 FSInputFile(path, filename=record["name"]),
                 caption="🖼 " + record["name"],
                 parse_mode=None,
             )
+            self.store.set("last_notice_message_id", str(sent.message_id))
+            return sent
 
         if locked:
             return await publish()
@@ -841,6 +848,7 @@ class BotRuntime:
             place = next(
                 (p["name"] for p in projects if p["path"] == session["cwd"]), Path(session["cwd"]).name
             )
+            duration = await self.completion_duration(row) if row["kind"] != "attachment" else None
             async with self.send_lock:
                 await self.throttle()
                 if row["kind"] == "attachment":
@@ -855,8 +863,17 @@ class BotRuntime:
                     }.get(payload.get("status"), "⚠️ " + str(payload.get("status", "Ended")))
                     sent = await self.bot.send_message(
                         self.settings.allowed_user_id,
-                        f"{label}\n📍 {place}\n💬 {session['name']}",
-                        parse_mode=None,
+                        f"{label} · <i>({duration})</i>\n📍 {escape(place)}\n💬 {escape(session['name'])}",
+                        parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup(
+                            inline_keyboard=[
+                                [
+                                    InlineKeyboardButton(
+                                        text="💬 Open session", callback_data="open:" + row["session_id"]
+                                    )
+                                ]
+                            ]
+                        ),
                         disable_notification=False,
                     )
                 with self.store.db:
@@ -864,6 +881,39 @@ class BotRuntime:
                         "UPDATE notifications SET status='sent',telegram_id=? WHERE event_id=?",
                         (sent.message_id, row["event_id"]),
                     )
+                self.store.set("last_notice_message_id", str(sent.message_id))
+            await self.refresh_panel()
+
+    async def completion_duration(self, row: dict) -> str:
+        """Measure the captured work interval, excluding earlier completed runs."""
+        start = None
+        after = 0
+        while True:
+            events = await self.engine.call(f"/events?after={after}")
+            if not events:
+                return "duration unavailable"
+            for event in events:
+                if event["id"] > row["event_id"]:
+                    return "duration unavailable"
+                if event.get("session_id") != row["session_id"]:
+                    continue
+                if event["id"] == row["event_id"]:
+                    if start is None:
+                        return "duration unavailable"
+                    seconds = max(0, int(event["created"] - start))
+                    hours, seconds = divmod(seconds, 3600)
+                    minutes, seconds = divmod(seconds, 60)
+                    return (
+                        "~"
+                        + (f"{hours}h " if hours else "")
+                        + (f"{minutes}m " if minutes or hours else "")
+                        + f"{seconds}s"
+                    )
+                if event["kind"] == "completed":
+                    start = None
+                elif event["kind"] == "user" and start is None:
+                    start = event["created"]
+            after = events[-1]["id"]
 
     async def delivery_loop(self):
         while not self.stop_event.is_set():

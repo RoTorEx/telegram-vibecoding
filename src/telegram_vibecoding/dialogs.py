@@ -6,13 +6,17 @@ from pathlib import Path
 from typing import Any
 
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import ContentType
 from aiogram_dialog import Dialog, DialogManager, ShowMode, StartMode, Window
+from aiogram_dialog.api.entities import MediaAttachment
 from aiogram_dialog.widgets.kbd import Button, Group, Row, Select
 from aiogram_dialog.widgets.link_preview import LinkPreview
+from aiogram_dialog.widgets.media import DynamicMedia
 from aiogram_dialog.widgets.text import Const, Format
 
 from telegram_vibecoding import __version__
-from telegram_vibecoding.markdown import html_length
+from telegram_vibecoding.book import chapter_pages
+from telegram_vibecoding.markdown import html_length, split_html
 from telegram_vibecoding.presentation import (
     activity_label,
     conversation_parts,
@@ -29,6 +33,7 @@ class Screens(StatesGroup):
     journal = State()
     sessions = State()
     chat = State()
+    history = State()
     config = State()
     details = State()
     settings = State()
@@ -101,7 +106,7 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
         "journal_label": "📒 Journal",
         "has_session_context": bool(session)
         and (
-            screen in {Screens.chat, Screens.config, Screens.details, Screens.models}
+            screen in {Screens.chat, Screens.history, Screens.config, Screens.details, Screens.models}
             or (screen == Screens.input and app.store.get("input_action") in {"rename", "folder"})
         ),
         "previous_page": False,
@@ -116,6 +121,7 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
         "question_rows": [],
         "has_images": False,
         "mcp_question": False,
+        "media": None,
     }
     if screen == Screens.deck:
         sessions = await app.engine.call("/sessions")
@@ -204,8 +210,8 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
             app, screen, projects, lambda p: f"<b>{escape(p['name'])}</b> ({escape(p['path'])})"
         )
         v["text"] = "📍 Location\n\nChoose where to work.\n\n" + listing
-    elif screen == Screens.chat and session:
-        cursor = app.store.get("history_anchor")
+    elif screen in {Screens.chat, Screens.history} and session:
+        cursor = app.store.get("history_anchor") if screen == Screens.history else ""
         conversation = await app.engine.call(
             f"/sessions/{sid}/conversation" + (f"?anchor={cursor}" if cursor else "")
         )
@@ -218,7 +224,7 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
             if current_live
             else session["status"].title()
         )
-        content = app.store.get("history_content", "answer")
+        content = "answer"
         v["request_tab"] = ("• " if content == "request" else "") + "👤 You"
         v["answer_tab"] = ("• " if content == "answer" else "") + "🤖 Codex"
         v["progress_tab"] = ("• " if content == "progress" else "") + "💭 Updates"
@@ -244,8 +250,40 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
                         }
                     )
             conversation = {**conversation, "replies": replies}
-        parts = conversation_parts(conversation, live, rich=True, view=content, compact=True)
-        part = int(app.store.get("history_part", "-1"))
+        output = {
+            **conversation,
+            "replies": [e for e in conversation["replies"] if e["kind"] != "attachment"],
+        }
+        parts = conversation_parts(output, live, rich=True, view=content, compact=True)
+        attachments: list[dict] = []
+        if screen == Screens.history:
+            if live:
+                conversation = {
+                    **conversation,
+                    "replies": [
+                        *conversation["replies"],
+                        *[
+                            {
+                                "kind": "reasoning_summary",
+                                "payload": {"parts": [parts[k] for k in sorted(parts, key=int)]},
+                            }
+                            for parts in live.get("summaries", {}).values()
+                        ],
+                    ],
+                }
+            try:
+                attachments = (
+                    await app.engine.call(f"/sessions/{sid}/attachments?anchor={conversation['user']['id']}")
+                    if conversation["user"]
+                    else []
+                )
+            except ValueError:
+                pass
+            book = chapter_pages(
+                conversation, attachments, app.settings.data_dir / "uploads", user_limit=3700
+            )
+            parts = [p["text"] for p in book]
+        part = int(app.store.get("history_part", "0")) if screen == Screens.history else 0
         part = len(parts) - 1 if part < 0 else min(part, len(parts) - 1)
         app.store.set(
             "history_view",
@@ -258,11 +296,10 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
                 }
             ),
         )
-        v["history_previous"] = part > 0
-        v["history_next"] = part + 1 < len(parts)
+        v["history_previous"] = part > 0 or conversation["previous"] is not None
+        v["history_next"] = part + 1 < len(parts) or conversation["next"] is not None
         v["exchange_previous"] = conversation["previous"] is not None
         v["exchange_next"] = conversation["next"] is not None
-        v["show_now"] = conversation["next"] is not None or part + 1 < len(parts) or content != "answer"
         header = "<b>💬 " + escape(session["name"][:55]) + "</b>"
         state = (
             activity_label(current_live, session["effort"], rich=True).split(" · Reasoning:", 1)[0]
@@ -270,21 +307,25 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
             else escape(session["status"].title())
         )
         header += "\n" + escape(model.get("displayName") or model["id"]) + " · " + state
-        if conversation["total"] > 1 and conversation["next"] is not None:
-            header += f"\n<i>History · {conversation['index']} of {conversation['total']}</i>"
-        if len(parts) > 1:
-            header += f"\nPage {part + 1} of {len(parts)}"
-        v["text"] = header + ("\n\n" + parts[part] if parts[part] else "")
-        try:
-            attachments = await app.engine.call(
-                f"/sessions/{sid}/attachments"
-                + (f"?anchor={conversation['user']['id']}" if conversation["user"] else "")
+        if screen == Screens.chat and len(parts) > 1:
+            header += f"\n<i>Answer · Page 1/{len(parts)}</i>"
+        if screen == Screens.history:
+            header += f"\n<i>Chapter {conversation['index']}/{conversation['total']} · Page {part + 1}/{len(parts)}</i>"
+            source = book[part]["path"]
+            v["media"] = (
+                MediaAttachment(
+                    ContentType.DOCUMENT
+                    if Path(source).stat().st_size > 10_000_000
+                    else ContentType.ANIMATION
+                    if Path(source).suffix == ".gif"
+                    else ContentType.PHOTO,
+                    path=source,
+                )
+                if source
+                else None
             )
-        except ValueError:
-            attachments = []
-        v["has_images"] = bool(attachments)
-        v["images_label"] = f"📎 Images ({len(attachments)})"
-        if questions and content == "answer" and not conversation["next"] and part == len(parts) - 1:
+        v["text"] = header + ("\n\n" + parts[part] if parts[part] else "")
+        if questions and screen == Screens.chat:
             q = questions[0]
             app.store.set("question_session:" + q["id"], sid)
             if q["method"] == "item/tool/requestUserInput":
@@ -308,11 +349,7 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
             effort_label="Reasoning: " + session["effort"],
             plan_label="Plan mode: " + ("On" if session["collaboration_mode"] == "plan" else "Off"),
         )
-        v["text"] = (
-            f"⚙️ Config · {session['name']}\n\nAgent: Codex\n"
-            f"{v['model_label']}\n{v['effort_label']}\n{v['plan_label']}\n\n"
-            "Reasoning cycles with each tap. Changes apply to the next turn."
-        )
+        v["text"] = "<b>⚙️ Config</b>\n" + escape(session["name"]) + "\n\nChanges apply to the next turn."
     elif screen == Screens.details and session:
         details = await app.engine.call(f"/sessions/{sid}/details")
         projects = await app.engine.call("/projects")
@@ -382,7 +419,7 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
     app.view_receipt = None
     if (
         app.read_requested
-        and screen == Screens.chat
+        and screen in {Screens.chat, Screens.history}
         and content == "answer"
         and session
         and not conversation["next"]
@@ -401,15 +438,18 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
         Screens.sessions,
         Screens.journal,
         Screens.edit_sessions,
+        Screens.config,
+        Screens.history,
     } and (screen != Screens.chat or not session):
         v["text"] = escape(v["text"])
     v["has_pages"] = v["previous_page"] or v["next_page"]
     if notice := app.store.get("notice"):
         combined = v["text"] + "\n\n" + escape(notice)
-        if html_length(combined) <= 4000:
+        limit = 1024 if v.get("media") else 4000
+        if html_length(combined) <= limit:
             v["text"] = combined
         else:
-            v["text"] = "⚠️ " + escape(notice) + "\n\nUse Back to continue."
+            v["text"] = split_html("⚠️ " + escape(notice), limit - 32)[0]
     app.receipt_text = v["text"]
     return v
 
@@ -430,12 +470,17 @@ async def go(manager: DialogManager, screen: State, *, remember=True) -> None:
         trail.append(current.state)
         app.store.set("trail", json.dumps(trail[-16:]))
     app.store.set(
-        "mode", "input" if screen == Screens.input else "chat" if screen == Screens.chat else "menu"
+        "mode",
+        "input"
+        if screen == Screens.input
+        else "chat"
+        if screen in {Screens.chat, Screens.history}
+        else "menu",
     )
     app.store.set("screen", screen.state)
     if screen == Screens.sessions:
         app.store.set("starting_session_key", "")
-    app.read_requested = screen == Screens.chat
+    app.read_requested = screen in {Screens.chat, Screens.history}
     app.store.set("input_action", app.store.get("input_kind") if screen == Screens.input else "")
     await manager.switch_to(screen, show_mode=ShowMode.EDIT)
 
@@ -451,8 +496,6 @@ async def back(c, b, manager):
     target = trail.pop() if trail else Screens.deck.state
     app.store.set("trail", json.dumps(trail))
     screen = next((s for s in Screens.__all_states__ if s.state == target), Screens.deck)
-    if screen == Screens.config:
-        screen = Screens.chat
     await go(manager, screen, remember=False)
 
 
@@ -517,7 +560,7 @@ async def settings(c, b, manager):
 
 
 async def config(c, b, manager):
-    await go(manager, Screens.chat)
+    await go(manager, Screens.config)
 
 
 async def details(c, b, manager):
@@ -571,23 +614,34 @@ async def page(c, b, manager):
     manager.show_mode = ShowMode.EDIT
 
 
+async def open_history(c, b, manager):
+    app = runtime(manager)
+    app.store.set("history_anchor", "")
+    app.store.set("history_part", "0")
+    await go(manager, Screens.history)
+
+
 async def history(c, b, manager):
     app = runtime(manager)
     app.read_requested = True
     view = json.loads(app.store.get("history_view", "{}"))
-    if b.widget_id in {"latest", "activity"}:
-        app.store.set("history_content", "answer")
-        app.store.set("history_anchor", "")
-        app.store.set("history_part", "-1")
-    elif b.widget_id in {"exchange_prev", "exchange_next"}:
+    target = None
+    part = view.get("part", 0)
+    if b.widget_id in {"exchange_prev", "exchange_next"}:
         target = view["previous"] if b.widget_id == "exchange_prev" else view["next"]
-        if target:
-            app.store.set("history_anchor", str(target))
-            app.store.set("history_part", "0")
-    else:
-        app.store.set("history_anchor", str(view["anchor"]) if view.get("anchor") else "")
-        direction = -1 if b.widget_id == "history_prev" else 1
-        app.store.set("history_part", str(max(0, min(view["part"] + direction, view["parts"] - 1))))
+        part = 0
+    elif b.widget_id == "history_prev":
+        if part > 0:
+            part -= 1
+        else:
+            target, part = view["previous"], -1
+    elif b.widget_id == "history_next":
+        if part + 1 < view["parts"]:
+            part += 1
+        else:
+            target, part = view["next"], 0
+    app.store.set("history_anchor", str(target or view.get("anchor") or ""))
+    app.store.set("history_part", str(part))
     manager.show_mode = ShowMode.EDIT
 
 
@@ -769,32 +823,18 @@ def make_dialog() -> Dialog:
             Format("{text}"),
             LinkPreview(is_disabled=True),
             Row(
+                Button(Const("⚙️ Config"), id="config", on_click=config),
                 Button(Const("ℹ️ Details"), id="details", on_click=details),
-                Button(Const("⏸ Pause"), id="stop", on_click=stop, when="can_stop"),
             ),
             Row(
-                Button(Format("{model_label}"), id="models", on_click=models),
-                Button(Format("{effort_label}"), id="reasoning", on_click=cycle_effort),
-                Button(Format("{plan_label}"), id="plan", on_click=toggle_plan),
-            ),
-            Row(
-                Button(Format("{request_tab}"), id="tab_request", on_click=content_tab),
-                Button(Format("{answer_tab}"), id="tab_answer", on_click=content_tab),
-                Button(Format("{progress_tab}"), id="tab_progress", on_click=content_tab),
-            ),
-            Row(
-                Button(Const("◀ Previous"), id="exchange_prev", on_click=history, when="exchange_previous"),
-                Button(Const("Next ▶"), id="exchange_next", on_click=history, when="exchange_next"),
-                Button(Const("⏩ Now"), id="latest", on_click=history, when="show_now"),
-            ),
-            Row(
-                Button(Const("◀ Page"), id="history_prev", on_click=history, when="history_previous"),
-                Button(Const("Page ▶"), id="history_next", on_click=history, when="history_next"),
+                Button(Const("📖 Chat history"), id="history", on_click=open_history),
+                Button(Const("⏹ Stop"), id="stop", on_click=stop),
             ),
             Select(
                 Format("{item[0]}"),
                 id="answer",
                 items="question_rows",
+                when="question_rows",
                 item_id_getter=lambda x: x[1],
                 on_click=answer,
             ),
@@ -803,9 +843,24 @@ def make_dialog() -> Dialog:
                 Button(Const("Decline"), id="decline", on_click=mcp),
                 when="mcp_question",
             ),
-            Button(Format("{images_label}"), id="images", on_click=images, when="has_images"),
             navigation(with_config=False),
             state=Screens.chat,
+            parse_mode="HTML",
+        ),
+        Window(
+            Format("{text}"),
+            DynamicMedia("media"),
+            LinkPreview(is_disabled=True),
+            Row(
+                Button(Const("◀ Page"), id="history_prev", on_click=history, when="history_previous"),
+                Button(Const("Page ▶"), id="history_next", on_click=history, when="history_next"),
+            ),
+            Row(
+                Button(Const("⏮ Chapter"), id="exchange_prev", on_click=history, when="exchange_previous"),
+                Button(Const("Chapter ⏭"), id="exchange_next", on_click=history, when="exchange_next"),
+            ),
+            navigation(with_config=False),
+            state=Screens.history,
             parse_mode="HTML",
         ),
         Window(
@@ -907,11 +962,11 @@ def make_dialog() -> Dialog:
 async def open_screen(manager: DialogManager, screen: State) -> None:
     app = runtime(manager)
     app.store.set("notice", "")
-    app.store.set("mode", "chat" if screen == Screens.chat else "menu")
+    app.store.set("mode", "chat" if screen in {Screens.chat, Screens.history} else "menu")
     app.store.set("screen", screen.state)
     if screen == Screens.sessions:
         app.store.set("starting_session_key", "")
-    app.read_requested = screen == Screens.chat
+    app.read_requested = screen in {Screens.chat, Screens.history}
     app.store.set("input_action", "")
     app.store.set(
         "trail",

@@ -31,28 +31,44 @@ Edit is also available in Journal; its scope is the location or all projects,
 respectively. It lists drafts too, and opens an explicit Archive action stating
 that active work will stop. Archiving hides the session from active lists while
 retaining history and project files. There is no permanent-delete action. Locations are existing registered directories; do not expose
-a manual Other location input action in this menu. Model/reasoning/Plan controls belong to the open chat, never session lists or
-global Settings. The compact chat header repeats only the effective model and current activity/status; effort and Plan remain on their buttons.
-An already-open legacy Config view recovers into its chat without acknowledging
-unread results.
+a manual Other location input action in this menu.
 
-A session uses one editable panel: session title, a compact model/status line,
-then agent output. Keep original user input under You, final output under Codex
-(the default), and public commentary/reasoning under Updates. While no final
-answer exists, show the latest public commentary in the default output; the
-final answer replaces it. Do not repeat a
-request quote, role heading for a normal answer, empty-answer boilerplate or
-permanent input hints in the main output. Previous/Next browse history; Now
-returns to current output and appears only when away from it. Page controls
-appear only for multi-page content. A small history position appears while
-browsing older input. The animated activity and elapsed time stay in the header,
-including while older history is open, without an extra activity button.
-Only explicit viewing of the current answer's final page acknowledges completion;
-You/Updates never mark it read. Config has no navigation button. Direct
-model/effort/Plan controls apply to the next turn without interrupting work.
-Details and Pause lead the chat controls; Pause retains native identity/history.
-A successful accepted input clears the previous transient error, and process
-startup discards stale notices without changing durable inbox/retry state.
+The main session screen contains its title, a compact effective-model/status line
+and current agent output. It has exactly three normal control rows: Config and
+Details; Chat history and emergency Stop; Back and Deck. Config contains model,
+reasoning and Plan controls. Do not put these controls, role tabs, Images or
+history pagination on the main screen. A long current answer starts at its first
+page and indicates more pages in Chat history. Native pending questions add
+only their required answer controls. Stop retains native identity and history.
+
+Chat history is a book reader. One chapter is a user input plus subsequent agent
+output up to the next user input. A chapter always starts with the original user
+message on its own page, followed by lossless ordered response/progress pages.
+Do not mix the end of an agent response and the next user message on one page.
+Keep a fitting user message whole; reserve up to 3700 visible UTF-16 units for
+its body, leaving room for title/status, author and chapter/page counters within
+Telegram's 4096-unit limit. Oversized user input continues on explicitly labeled
+You pages; the full original remains intact. Agent blocks use the existing
+3000-unit body budget. Repeat concise role labels on continuation pages.
+
+Page arrows read continuously across chapter boundaries: forward enters the next
+user page; backward enters the preceding chapter's last page. Chapter arrows
+always jump to the user page at the start of the adjacent chapter. Opening Chat
+history starts at the current chapter's first user page. Back restores the live
+session. Browsing uses a captured anchor/page cursor, so new output does not jump
+the reader to another chapter. Current activity/elapsed time remains in the
+header. There are no You/Codex/Updates filters or separate image gallery controls.
+
+Images are actual page media, scoped to their original request. User uploads
+follow that chapter's user page, and registered output images occupy their
+corresponding image pages. Use a short role caption below Telegram's 1024-unit
+media-caption limit; keep long text on text pages. Photos use the 10 MB photo
+ceiling; larger supported originals (up to the existing 20 MB transport ceiling)
+use documents, and GIF uses animation. Returning to a text page removes media
+from the working panel. Preserve downloadable originals and attachment anchors.
+Only explicitly viewing the latest chapter's final page, or a complete current
+answer, acknowledges a completion. Browsing user/older/partial pages, Config,
+Details and background refreshes never mark new outcomes read.
 
 Details uses separate bold identity/status, Location, Timeline and Storage blocks.
 It contains title, host, directory, location, creation/request/response/completion
@@ -64,7 +80,7 @@ The bot has no archive browser or reopen action; closed history remains stored.
 ## Transport and state
 
 Text and supported images pass unchanged to Core. New messages steer active
-work. The 20 MB Telegram cloud download ceiling is enforced. Conversation parts
+work. The 20 MB Telegram cloud download ceiling is enforced. Agent response parts
 are at most 3200 UTF-16 units, leaving room for the header and notices below the
 4096-unit API limit. Albums use a one-second quiet window and retain their first
 captured target. Outgoing changes are throttled to at least one second, with
@@ -142,7 +158,8 @@ raw HTML is literal text. Tables become readable rows for narrow phone screens,
 preserving headers and cell contents. Do not rewrite the agent prompt to enforce
 an output format. Public progress keeps its existing code filtering.
 
-Pack rendered content into pages of at most 3200 visible UTF-16 units. Split
+Pack agent output into pages of at most 3200 visible UTF-16 units; user-first
+pages use the chapter budget above. Split
 individual role blocks at 3000 units to reserve space for repeated labels and
 part counters. Mixed/export views use bold author/type labels: 👤 You, 🤖 Codex · Answer,
 💬 Codex · Progress, 🧠 Codex · Reasoning, or a labeled question/system outcome.
@@ -165,7 +182,7 @@ are excluded only from the unread finished-result count until they finish.
 Failures and interruptions can also require attention.
 
 An outcome becomes viewed only after an owner navigation opens its latest chat
-page, or Latest/Next reaches that page, and Telegram successfully accepts the
+page, or history navigation reaches that page, and Telegram successfully accepts the
 panel. Opening Journal/Config/Details, browsing older history and background
 updates never acknowledge it. Telegram supplies no user read receipts to this
 bot. Per-session completion cursors persist in bot.db, advance monotonically and
@@ -216,14 +233,27 @@ or replace the working panel. Ignore historical events predating the feature's
 first activation. Session lists retain their explicit-view unread count.
 
 The Core attachment contract copies explicitly selected PNG/JPEG/WebP files into
-private uploads, scoped to session and user-request anchor. The bot sends these
-as downloadable original documents, retains their references in history, and
-provides an Images gallery for the selected request. Navigation and panel
-cleanup never delete delivered files or notices. No arbitrary host files are
-exported automatically. Producers register chosen images through the Core API;
-the frontend does not import Core code. Image delivery has the same durable
-known-success retry behavior as completion notices and does not acknowledge an
-answer as read.
+private uploads, scoped to session and user-request anchor. Original delivery
+remains durable; browsing shows each image directly in its matching history
+page. There is no persistent Images button or separate gallery in session chat.
+Navigation retires only the working panel/media, never original owner messages,
+standalone file deliveries or completion notices. Producers register selected
+images through the Core API; the frontend does not import Core code.
+
+Completion notices show location, session, outcome and elapsed work time in
+italic approximate parentheses. Derive elapsed time from the first retained user
+input after that session's previous terminal event to this terminal event;
+steering does not reset it. This includes preprocessing and waiting for input.
+Missing historical evidence is explicitly unavailable, never session age or a
+fabricated duration. Every notice has one Open session button targeting its
+captured session, independent of the active project/menu. Merely delivering it
+never marks results read.
+
+Persist the highest accepted standalone notice/file message ID as a panel floor.
+After delivery, refresh the active panel below that floor; subsequent navigation
+and interactions keep the panel at the chat tail. Telegram edits cannot reorder
+messages: send the replacement first, persist it, then retire the old working
+panel. Keep notices and read cursors intact across UI retries and restarts.
 
 ## Seven-day local retention
 

@@ -4,14 +4,14 @@ The private Telegram interface of Remote Vibecoding.
 
 Open @GardenSandbox_bot and send /menu. Choose Location, a numbered host
 directory, then a session. Sending text, images or voice from the location's
-session list starts a new session there. Model/reasoning/Plan controls live in
-the chat; Details groups status, location, timeline, storage, rename and close.
-You/Codex/Updates separate original input, agent output and public progress.
-Previous/Next browse history, Now returns to current output, and Page appears
-only for long text. The compact title/model/status header stays live while browsing history. Main Deck
-contains account Limits and reset times. Finished sessions send short standalone
-notifications without acknowledging unread results. Images are delivered as
-original documents and remain downloadable through the session's Images view. Back/Deck are the final row.
+session list starts a new session there. Session controls have three rows:
+Config/Details, Chat history/Stop, and Back/Deck. Config contains model, reasoning
+and Plan settings. History reads ordered pages continuously and offers separate
+chapter jumps to the next/previous user input. Image pages show attached media
+directly; text pages remove it. Main Deck contains account Limits and reset
+times. Completion notices show elapsed work time and Open session; the active
+panel moves below notices and keeps its captured session context.
+
 Text and images go directly to Vibecoding Core.
 
 Run make install and make check. Integration checks require the sibling

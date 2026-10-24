@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Replace role filters and the image gallery button with a dedicated chapter/page history reader, including inline request-scoped images and continuous page navigation.
+- Restore Config beside Details and keep Chat history/Stop and Back/Deck as the remaining main session rows.
+- Include elapsed work time and Open session in completion notices; keep the active panel below standalone notifications and file deliveries.
+
 ## [0.1.15] - 2026-10-24
 
 - Simplify chat to title, model/status and agent output; use You/Codex/Updates and contextual Previous/Next/Now and Page controls. Clear stale format notices after accepted input.

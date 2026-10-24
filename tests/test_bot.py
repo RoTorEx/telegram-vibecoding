@@ -7,13 +7,17 @@ from aiogram.client.session.base import BaseSession
 from aiogram.methods import (
     AnswerCallbackQuery,
     DeleteMessage,
+    EditMessageCaption,
+    EditMessageMedia,
     EditMessageReplyMarkup,
     EditMessageText,
     GetMe,
+    SendAnimation,
     SendDocument,
     SendMessage,
+    SendPhoto,
 )
-from aiogram.types import Chat, Message, User
+from aiogram.types import Animation, Chat, Document, Message, PhotoSize, User
 from conftest import settle
 
 from telegram_vibecoding.bot import BotRuntime, SQLiteFSM, authorized
@@ -34,15 +38,57 @@ class TelegramFake(BaseSession):
         self.calls.append(method)
         if isinstance(method, GetMe):
             return User(id=123456, is_bot=True, first_name="Relay", username="GardenSandbox_bot")
-        if isinstance(method, (SendMessage, EditMessageText, SendDocument)):
-            if isinstance(method, (SendMessage, SendDocument)):
+        if isinstance(
+            method,
+            (
+                SendMessage,
+                EditMessageText,
+                SendDocument,
+                SendPhoto,
+                SendAnimation,
+                EditMessageMedia,
+                EditMessageCaption,
+            ),
+        ):
+            if isinstance(method, (SendMessage, SendDocument, SendPhoto, SendAnimation)):
                 self.counter += 1
+            media = getattr(method, "media", None)
+            kind = getattr(media, "type", None) or (
+                "photo"
+                if isinstance(method, SendPhoto)
+                else "animation"
+                if isinstance(method, SendAnimation)
+                else "document"
+                if isinstance(method, SendDocument)
+                else None
+            )
+            if isinstance(method, EditMessageCaption):
+                old = self.messages.get(method.message_id)
+                kind = "photo" if old and old.photo else "document" if old and old.document else kind
+            fields = {}
+            if kind == "photo":
+                fields["photo"] = [
+                    PhotoSize(
+                        file_id="photo-" + str(self.counter),
+                        file_unique_id="photo-" + str(self.counter),
+                        width=100,
+                        height=100,
+                    )
+                ]
+            elif kind == "document":
+                fields["document"] = Document(file_id="document", file_unique_id="document")
+            elif kind == "animation":
+                fields["animation"] = Animation(
+                    file_id="animation", file_unique_id="animation", width=100, height=100, duration=1
+                )
             result = Message(
+                **fields,
+                caption=getattr(method, "caption", None) or getattr(media, "caption", None),
                 message_id=getattr(method, "message_id", None) or self.counter,
                 date=datetime.now(UTC),
                 chat=Chat(id=42, type="private"),
                 from_user=User(id=123456, is_bot=True, first_name="Relay"),
-                text=getattr(method, "text", None) or "document",
+                text=None if kind else getattr(method, "text", None) or "document",
                 reply_markup=getattr(method, "reply_markup", None),
             )
             self.messages[result.message_id] = result
@@ -305,7 +351,22 @@ async def test_partial_image_file_is_not_reused_as_a_complete_attachment(app):
 
 
 def panel(transport):
-    return next(m for m in reversed(transport.calls) if isinstance(m, (SendMessage, EditMessageText)))
+    from types import SimpleNamespace
+
+    method = next(
+        m
+        for m in reversed(transport.calls)
+        if isinstance(
+            m, (SendMessage, EditMessageText, SendPhoto, SendAnimation, EditMessageMedia, EditMessageCaption)
+        )
+    )
+    if isinstance(method, (SendMessage, EditMessageText)):
+        return method
+    return SimpleNamespace(
+        text=getattr(method, "caption", None) or getattr(getattr(method, "media", None), "caption", ""),
+        reply_markup=method.reply_markup,
+        method=method,
+    )
 
 
 async def command(app, text):
@@ -340,6 +401,18 @@ async def click(app, text):
             },
         },
     }
+    visible = transport.messages.get(int(runtime.store.get("panel_id")))
+    if visible:
+        for media_type in ("photo", "document", "animation"):
+            value = getattr(visible, media_type, None)
+            if value:
+                body["callback_query"]["message"].pop("text", None)
+                body["callback_query"]["message"]["caption"] = current.text
+                body["callback_query"]["message"][media_type] = (
+                    [p.model_dump(mode="json", exclude_unset=True) for p in value]
+                    if isinstance(value, list)
+                    else value.model_dump(mode="json", exclude_unset=True)
+                )
     runtime.capture(body)
     await runtime.process_control(runtime.store.one("SELECT * FROM inbox WHERE id=?", (uid,)))
 
@@ -380,15 +453,18 @@ async def test_location_session_config_details_are_one_editable_panel(app):
     assert panel(transport).text == "<b>💬 New session</b>\nTest · Idle"
     assert not any(m == "turn/start" for m, p in native.calls)
     exits(transport)
-    await click(app, "🧠 medium")
+    await click(app, "⚙️ Config")
+    await click(app, "Reasoning: medium")
     assert engine.store.session(sid)["effort"] == "high"
-    await click(app, "🧠 high")
+    await click(app, "Reasoning: high")
     assert engine.store.session(sid)["effort"] == "medium"
-    await click(app, "📝 Plan: Off")
+    await click(app, "Plan mode: Off")
     assert engine.store.session(sid)["collaboration_mode"] == "plan"
-    await click(app, "🤖 Test")
+    await click(app, "Model: Test")
     exits(transport)
     await click(app, "Test")
+    assert runtime.store.get("screen") == "Screens:config"
+    await click(app, "⬅️ Back")
     assert runtime.store.get("mode") == "chat"
     assert "Model:" not in panel(transport).text
     await click(app, "ℹ️ Details")
@@ -428,9 +504,19 @@ async def test_stream_delivery_history_and_navigation_preserve_one_panel(app, ho
             runtime.queue_update(event)
         assert await runtime.deliver_pending()
         assert f"Exact native answer {index}" in panel(transport).text
-    await click(app, "◀ Previous")
-    assert "Original request 0" in panel(transport).text and "Exact native answer 0" in panel(transport).text
-    await click(app, "⏩ Now")
+    await click(app, "📖 Chat history")
+    assert (
+        "Original request 1" in panel(transport).text and "Exact native answer 1" not in panel(transport).text
+    )
+    await click(app, "⏮ Chapter")
+    assert (
+        "Original request 0" in panel(transport).text and "Exact native answer 0" not in panel(transport).text
+    )
+    await click(app, "Page ▶")
+    assert "Exact native answer 0" in panel(transport).text
+    await click(app, "Chapter ⏭")
+    assert "Original request 1" in panel(transport).text
+    await click(app, "Page ▶")
     assert "Exact native answer 1" in panel(transport).text
     assert runtime.store.get("panel_id") != first_id
     assert len(transport.messages) == 1
@@ -636,17 +722,20 @@ async def test_long_answer_is_browsable_in_one_panel_without_dropping_text(app):
     await runtime.refresh_panel()
     from test_markdown import CheckedHTML
 
+    await click(app, "📖 Chat history")
+    assert "Original prompt" in panel(transport).text
+    await click(app, "Page ▶")
     bodies = []
     while True:
         current = panel(transport)
         assert len(current.text.encode("utf-16-le")) // 2 <= 4096
-        body = current.text.split("\n\n", 1)[1]
+        body = current.text.split("\n\n", 2)[2]
         bodies.append(CheckedHTML(body).text)
         labels = [b.text for row in current.reply_markup.inline_keyboard for b in row]
-        if "◀ Page" not in labels:
+        if "Page ▶" not in labels:
             break
-        await click(app, "◀ Page")
-    assert "".join(reversed(bodies)) == answer
+        await click(app, "Page ▶")
+    assert "".join(bodies) == answer
     assert sum(isinstance(m, SendMessage) for m in transport.calls) == 1
 
 
@@ -843,12 +932,13 @@ async def test_live_feedback_animates_public_summaries_without_tool_or_code_outp
     )
     monkeypatch.setattr(presentation.time, "time", lambda: 110)
     await runtime.refresh_panel()
-    await click(app, "💭 Updates")
+    await click(app, "📖 Chat history")
+    await click(app, "Page ▶")
     identity = runtime.store.get("panel_id")
     before = panel(transport).text
     labels = [button.text for row in panel(transport).reply_markup.inline_keyboard for button in row]
     assert "00:10 elapsed" in before
-    assert "🧠 medium" in labels and "Reasoning: medium" not in before
+    assert "⚙️ Config" not in labels and "Reasoning: medium" not in before
     assert "Checking behavior." in before and "Then verifying recovery." in before
     assert all(s not in before for s in ["SECRET_CODE", "SECRET_COMMAND", "LIVE_CODE", "TOOL_OUTPUT"])
     monkeypatch.setattr(presentation.time, "time", lambda: 112)
@@ -863,7 +953,7 @@ async def test_live_feedback_animates_public_summaries_without_tool_or_code_outp
     native.finish(thread, text="Final answer")
     await runtime.refresh_panel()
     assert "Checked behavior." in panel(transport).text
-    await click(app, "🤖 Codex")
+    await click(app, "⬅️ Back")
     completed = panel(transport).text
     assert "Final answer" in completed and "Checked behavior." not in completed
     assert "Codex · Answer</b>" not in completed
@@ -1033,7 +1123,7 @@ async def test_stop_is_usable_while_voice_is_transcribing(app):
     await entered.wait()
     await runtime.refresh_panel()
     assert "Transcribing voice" in panel(transport).text
-    await click(app, "⏸ Pause")
+    await click(app, "⏹ Stop")
     assert engine.store.request("telegram:3200")["state"] == "cancelled"
     assert engine.store.session(sid)["status"] == "interrupted"
     assert not any(m == "turn/start" for m, p in native.calls)
@@ -1056,11 +1146,11 @@ async def test_saved_agent_markdown_renders_in_the_actual_dialog_panel(app):
     assert "<b>Ready</b>" in rendered.text
     assert "• <code>core</code> — Agents &amp; state" in rendered.text
     assert "literal user input" not in rendered.text
-    await click(app, "👤 You")
+    await click(app, "📖 Chat history")
     assert "&lt;b&gt;literal user input&lt;/b&gt;" in panel(transport).text
     assert "**" not in rendered.text and "|" not in rendered.text
     assert engine.store.history(sid)[-1]["payload"]["text"] == raw
-    await click(app, "🤖 Codex")
+    await click(app, "⬅️ Back")
     await click(app, "ℹ️ Details")
     await click(app, "⬅️ Back")
     assert "<b>Ready</b>" in panel(transport).text
@@ -1171,16 +1261,20 @@ async def test_background_completion_does_not_mark_read_and_latest_acknowledges(
     first = engine.store.event(sid, "completed", {"status": "completed"})
     await runtime.refresh_panel()
     assert runtime.store.viewed(sid) == 0
-    await click(app, "• 🤖 Codex")
+    await click(app, "📖 Chat history")
+    await click(app, "Page ▶")
     assert runtime.store.viewed(sid) == first
+    await click(app, "⬅️ Back")
     engine.store.event(sid, "user", {"text": "More work"})
     engine.store.event(sid, "message", {"text": "New result"})
     second = engine.store.event(sid, "completed", {"status": "completed"})
     await runtime.refresh_panel()
     assert runtime.store.viewed(sid) == first < second
-    await click(app, "◀ Previous")
+    await click(app, "📖 Chat history")
+    await click(app, "⏮ Chapter")
     assert runtime.store.viewed(sid) == first
-    await click(app, "⏩ Now")
+    await click(app, "Chapter ⏭")
+    await click(app, "Page ▶")
     assert runtime.store.viewed(sid) == second
     from telegram_vibecoding.store import BotStore
 
@@ -1247,7 +1341,8 @@ async def test_new_completion_during_publication_stays_unread(app):
         return result
 
     transport.make_request = completing
-    await click(app, "• 🤖 Codex")
+    await click(app, "📖 Chat history")
+    await click(app, "Page ▶")
     assert later and runtime.store.viewed(sid) == first < later[0]
     await click(app, "🏠 Deck")
     assert "Unread: <b>1</b>" in panel(transport).text
@@ -1331,22 +1426,22 @@ async def test_exchange_and_text_pages_are_independent_and_pause_keeps_identity(
     await settle(engine)
     await runtime.refresh_panel()
     rows = [[b.text for b in row] for row in panel(transport).reply_markup.inline_keyboard]
-    assert rows[0] == ["ℹ️ Details", "⏸ Pause"]
-    assert rows[1] == ["🤖 Test", "🧠 medium", "📝 Plan: Off"]
-    await click(app, "◀ Previous")
+    assert rows == [["⚙️ Config", "ℹ️ Details"], ["📖 Chat history", "⏹ Stop"], ["⬅️ Back", "🏠 Deck"]]
+    await click(app, "📖 Chat history")
+    await click(app, "⏮ Chapter")
     view = json.loads(runtime.store.get("history_view"))
     anchor = view["anchor"]
-    assert "History · 1 of 2" in panel(transport).text
-    await click(app, "👤 You")
+    assert view["part"] == 0 and "Chapter 1/2" in panel(transport).text
     assert "<b>👤 You</b>" in panel(transport).text and "<blockquote>" in panel(transport).text
     await click(app, "Page ▶")
     assert json.loads(runtime.store.get("history_view"))["anchor"] == anchor
-    assert "History · 1 of 2" in panel(transport).text
-    await click(app, "Next ▶")
+    assert "Chapter 1/2" in panel(transport).text
+    await click(app, "Chapter ⏭")
     assert "Second request" in panel(transport).text
-    await click(app, "⏩ Now")
+    assert json.loads(runtime.store.get("history_view"))["part"] == 0
+    await click(app, "⬅️ Back")
     assert html_length(panel(transport).text) < 4096
-    await click(app, "⏸ Pause")
+    await click(app, "⏹ Stop")
     assert engine.store.session(sid)["status"] == "interrupted"
     assert engine.store.session(sid)["thread_id"] == thread
     await command(app, "Continue")
@@ -1630,9 +1725,14 @@ async def test_registered_image_delivers_original_and_remains_browsable(app, tmp
     sends = [call for call in transport.calls if isinstance(call, SendDocument)]
     assert len(sends) == 1 and str(sends[0].document.path) == attachment["path"]
     await runtime.refresh_panel()
-    await click(app, "📎 Images (1)")
-    await click(app, "1")
-    assert len([call for call in transport.calls if isinstance(call, SendDocument)]) == 2
+    assert not any("Images" in b.text for row in panel(transport).reply_markup.inline_keyboard for b in row)
+    await click(app, "📖 Chat history")
+    await click(app, "Page ▶")
+    assert isinstance(panel(transport).method, EditMessageMedia)
+    assert str(panel(transport).method.media.media.path) == attachment["path"]
+    assert len([call for call in transport.calls if isinstance(call, SendDocument)]) == 1
+    await click(app, "⬅️ Back")
+    assert not hasattr(panel(transport), "method")
     assert runtime.store.viewed(sid) == 0
 
 
