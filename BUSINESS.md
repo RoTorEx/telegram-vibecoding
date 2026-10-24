@@ -161,3 +161,21 @@ version and Warsaw time, then retires the prior bot panel. Preserve the selected
 session/view and all native work. One successful publication marks that boot's
 notice delivered; retries do not republish an already accepted notice. No owner
 messages are removed and restarting the interface does not mark results viewed.
+
+## Telegram intake and liveness
+
+Persist only fields actually received in incoming SDK updates, recursively using
+exclude_unset. Missing LinkPreviewOptions fields contain SDK Default sentinels,
+which are not Telegram JSON and must never enter durable input. Button callbacks
+and replies to bot panels carry these options. Intake preserves supplied media,
+aliases, session targets and unknown JSON fields; it never drops an update to
+escape a serialization failure. An expired callback acknowledgement returns to
+usable navigation and finishes that control, without blocking later commands.
+
+Readiness requires the current boot/PID and a successful polling/intake heartbeat
+no older than 120 seconds. Long polling is 25 seconds with a 35-second request
+deadline, so the bound tolerates several transient retries while exposing a
+stalled consumer. Advance the heartbeat after durable acceptance/control handling,
+not before the potentially failing serialization. A live process alone is not a
+healthy interactive bot. Tests cover typed callbacks/replies with preview options,
+subsequent commands, expired acknowledgements and stale polling health.

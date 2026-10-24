@@ -8,6 +8,12 @@
 - Separate exchange navigation from text-page navigation, repeat author/type labels across long queries and replies, and quote user input.
 - Put Config/Details first and Pause beside exchange navigation; display approximate relative times in italic parentheses.
 
+
+## [0.1.10] - 2026-10-24
+
+- Fix incoming button/reply serialization of SDK link-preview defaults that could block all commands behind one update.
+- Recover expired callback acknowledgements and detect stalled polling in health checks.
+
 ## [0.1.9] - 2026-10-24
 
 - Add Main Deck unread-result counts and a paginated Journal with durable explicit-view acknowledgements.

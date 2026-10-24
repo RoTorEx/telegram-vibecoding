@@ -694,6 +694,10 @@ def test_container_readiness_rejects_previous_boot_even_when_pid_is_reused(tmp_p
     instance.write_text("new-container")
     assert not healthy(settings, instance)
     store.set("bot_instance", "new-container")
+    assert not healthy(settings, instance)
+    store.set("poll_heartbeat", str(time.time() - 121))
+    assert not healthy(settings, instance)
+    store.set("poll_heartbeat", str(time.time()))
     assert healthy(settings, instance)
     store.close()
 
@@ -1368,3 +1372,111 @@ async def test_unauthorized_events_cannot_navigate_or_dispatch_even_if_retained(
     await runtime.process_control(runtime.store.one("SELECT * FROM inbox WHERE id=9100"))
     assert runtime.store.get("panel_id") == panel_before
     assert not engine.store.sessions() and not native.calls
+
+
+async def test_typed_telegram_callback_preview_does_not_block_following_commands(app):
+    from aiogram.types import Update
+
+    runtime, transport, engine, native = app
+    await command(app, "/start")
+    uid = int(runtime.store.get("offset"))
+    raw = {
+        "update_id": uid,
+        "callback_query": {
+            "id": "real-shaped",
+            "chat_instance": "test",
+            "from": {"id": 42, "is_bot": False, "first_name": "Owner"},
+            "data": "deck",
+            "message": {
+                "message_id": int(runtime.store.get("panel_id")),
+                "date": int(time.time()),
+                "chat": {"id": 42, "type": "private"},
+                "text": "Panel",
+                "link_preview_options": {"is_disabled": True},
+                "reply_markup": {"inline_keyboard": [[{"text": "Deck", "callback_data": "deck"}]]},
+            },
+        },
+    }
+    await runtime.receive_update(Update.model_validate(raw))
+    row = runtime.store.one("SELECT * FROM inbox WHERE id=?", (uid,))
+    import json
+
+    assert row["status"] == "done"
+    stored = json.loads(row["body"])
+    assert stored["callback_query"]["message"]["link_preview_options"] == {"is_disabled": True}
+    assert int(runtime.store.get("offset")) == uid + 1
+    for command_text in ["/start", "/menu", "/stop"]:
+        uid += 1
+        await runtime.receive_update(Update.model_validate(update(uid, command_text)))
+        assert runtime.store.one("SELECT status FROM inbox WHERE id=?", (uid,))["status"] == "done"
+    assert float(runtime.store.get("poll_heartbeat")) > time.time() - 10
+    assert not native.calls
+
+
+async def test_reply_with_preview_and_media_is_durably_captured(app):
+    import json
+
+    from aiogram.types import Update
+
+    runtime, transport, engine, native = app
+    for i, extra in enumerate(
+        [
+            {"text": "plain reply"},
+            {"photo": [{"file_id": "p", "file_unique_id": "p", "width": 10, "height": 10}]},
+            {"voice": {"file_id": "v", "file_unique_id": "v", "duration": 2}},
+        ],
+        4000,
+    ):
+        body = update(
+            i, extra.get("text", ""), **{key: value for key, value in extra.items() if key != "text"}
+        )
+        body["message"]["reply_to_message"] = {
+            "message_id": 205,
+            "date": int(time.time()),
+            "chat": {"id": 42, "type": "private"},
+            "text": "Bot panel",
+            "link_preview_options": {"is_disabled": True},
+        }
+        await runtime.receive_update(Update.model_validate(body))
+        captured = json.loads(runtime.store.one("SELECT body FROM inbox WHERE id=?", (i,))["body"])
+        assert captured["message"]["reply_to_message"]["link_preview_options"] == {"is_disabled": True}
+        for key in extra:
+            assert captured["message"][key] == body["message"][key]
+
+
+async def test_expired_callback_acknowledgement_does_not_poison_control_queue(app):
+    from aiogram.exceptions import TelegramBadRequest
+    from aiogram.types import Update
+
+    runtime, transport, engine, native = app
+    await command(app, "/start")
+    original = transport.make_request
+
+    async def expired(bot, method, timeout=None):
+        if isinstance(method, AnswerCallbackQuery):
+            raise TelegramBadRequest(
+                method=method, message="query is too old and response timeout expired or query ID is invalid"
+            )
+        return await original(bot, method, timeout)
+
+    transport.make_request = expired
+    uid = int(runtime.store.get("offset"))
+    body = {
+        "update_id": uid,
+        "callback_query": {
+            "id": "expired",
+            "chat_instance": "x",
+            "from": {"id": 42, "is_bot": False, "first_name": "Owner"},
+            "data": "deck",
+            "message": {
+                "message_id": int(runtime.store.get("panel_id")),
+                "date": int(time.time()),
+                "chat": {"id": 42, "type": "private"},
+            },
+        },
+    }
+    await runtime.receive_update(Update.model_validate(body))
+    assert runtime.store.one("SELECT status FROM inbox WHERE id=?", (uid,))["status"] == "done"
+    transport.make_request = original
+    await runtime.receive_update(Update.model_validate(update(uid + 1, "/start")))
+    assert "Main Deck" in panel(transport).text

@@ -6,6 +6,7 @@ import logging
 import os
 import sqlite3
 import sys
+import time
 from contextlib import closing
 from pathlib import Path
 
@@ -18,7 +19,10 @@ def healthy(settings: Settings, instance_file=Path("/tmp/telegram-vibecoding-ins
         with closing(sqlite3.connect((settings.data_dir / "bot.db").as_uri() + "?mode=ro", uri=True)) as db:
             row = db.execute("SELECT value FROM meta WHERE key='bot_pid'").fetchone()
             instance = db.execute("SELECT value FROM meta WHERE key='bot_instance'").fetchone()
+            heartbeat = db.execute("SELECT value FROM meta WHERE key='poll_heartbeat'").fetchone()
         if not row or not instance or instance[0] != instance_file.read_text().strip():
+            return False
+        if not heartbeat or not 0 <= time.time() - float(heartbeat[0]) <= 120:
             return False
         os.kill(int(row[0]), 0)
         return True
