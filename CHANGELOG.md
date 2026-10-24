@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-10-24
+
 - Add Main Deck unread-result counts and a paginated Journal with durable explicit-view acknowledgements.
 - Notify the owner on bot restart while preserving the selected session and single-panel navigation.
 
