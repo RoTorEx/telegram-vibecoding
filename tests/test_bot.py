@@ -1597,7 +1597,18 @@ async def test_registered_image_delivers_original_and_remains_browsable(app, tmp
     image.write_bytes(b"\x89PNG\r\n\x1a\nfixture-image")
     attachment = await runtime.engine.call(f"/sessions/{sid}/attachments", {"path": str(image)})
     event = next(e for e in engine.store.events(0) if e["kind"] == "attachment")
-    runtime.queue_update(event)
+    original_call = runtime.engine.call
+
+    async def poll_once(path, body=None):
+        if path.startswith("/events?"):
+            runtime.stop_event.set()
+            return [event]
+        return await original_call(path, body)
+
+    runtime.engine.call = poll_once
+    await runtime.events_loop()
+    runtime.engine.call = original_call
+    runtime.stop_event.clear()
     await runtime.deliver_notifications()
     sends = [call for call in transport.calls if isinstance(call, SendDocument)]
     assert len(sends) == 1 and str(sends[0].document.path) == attachment["path"]

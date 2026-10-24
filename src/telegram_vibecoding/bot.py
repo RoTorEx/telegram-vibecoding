@@ -759,6 +759,7 @@ class BotRuntime:
                         "error",
                         "completed",
                         "question",
+                        "attachment",
                     }:
                         self.queue_update(event)
                     else:

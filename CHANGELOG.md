@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Route registered image events through polling so originals reach Telegram automatically.
+
 ## [0.1.13] - 2026-10-24
 
 - Group session details and journal entries, move model/effort/Plan controls into chat, and separate Request, Answer and Progress views with an always-live activity button.
