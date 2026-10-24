@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Group session details and journal entries, move model/effort/Plan controls into chat, and separate Request, Answer and Progress views with an always-live activity button.
+- Show real account quota windows and Warsaw reset times in Main Deck and Limits.
+- Start a captured new session for voice/text/images sent from a location's session list; preserve creation/input identities across fast input and retries.
+- Send short durable completion notifications without marking results read.
+- Deliver registered image originals and retain downloads in request-scoped session history galleries.
+
 ## [0.1.12] - 2026-10-24
 
 - Send persistent owner startup notifications with bot/Core versions, host and Warsaw time, independently of the replaceable session panel.

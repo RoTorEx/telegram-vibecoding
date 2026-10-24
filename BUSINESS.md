@@ -12,35 +12,45 @@ Main Deck and its navigation button use 🏠. Main Deck has Settings and Termina
 side by side, followed by Location and Journal. Its text shows session counts,
 without a selected location or path. Terminal reports bot/Core versions, protocol,
 host, Core revision/health, native process, intake, queued inputs and session/
-question/unread counts. Settings routes session configuration to Config.
+question/unread counts. Model, reasoning and Plan controls live directly in the chat; Settings explains
+that location. Account Limits is available from Main Deck and shows native quota
+windows, remaining percentages and reset timestamps with Warsaw's actual zone.
+Unknown/unsupported data stays unavailable; reset credits are never consumed.
 Use Telegram's default button styling without a primary color accent.
 Every screen ends with Back on the left and Deck on the right in one row. Home is the default first
 location. Numbered 1–8 controls page through locations and directory-scoped
 sessions. Location choices show the bold project name and its plain path in parentheses on one line.
-Selecting a location does not start an agent. Untouched, idle New session drafts
+Selecting a location does not start an agent. Sending text, supported images or
+voice from that location's session list creates a session in its captured path.
+Fast messages from the same list visit share a durable creation intent. Capture
+the path/intent before navigation or downloads; retrying session creation and
+input must reuse their identities. Main Deck/Settings input never starts work. Untouched, idle New session drafts
 without native threads or captured input are hidden from session lists; the New
 session button remains available. Draft records and history are preserved. The ➕ New action appears only within a location, beside ✏️ Edit.
 Edit is also available in Journal; its scope is the location or all projects,
 respectively. It lists drafts too, and opens an explicit Archive action stating
 that active work will stop. Archiving hides the session from active lists while
 retaining history and project files. There is no permanent-delete action. Locations are existing registered directories; do not expose
-a manual Other location input action in this menu. Config belongs to an open
-session and its nested views, never the location/session lists or global Settings.
+a manual Other location input action in this menu. Model/reasoning/Plan controls belong to the open chat, never session lists or
+global Settings. Their values appear on the buttons rather than repeated in text.
+An already-open legacy Config view recovers into its chat without acknowledging
+unread results.
 
-A session normally shows its title/status, original request and agent response
-in one editable panel. Exchange arrows select retained request/reply exchanges; Page arrows select
-text pages within that exchange and never cross to another exchange. Exchange
-navigation starts at page one. Latest selects the newest exchange's final page
-and follows live output. Config and Details form the first row, exchange arrows
-and an active-turn Pause button follow, then page arrows and Latest. Pause uses
-native Stop, preserving identity/history; new input starts another turn in the
-same session. It does not freeze/resume a process. Original Telegram messages
-are preserved. Config selects the latest available Sol and up to two latest
-Astra models, cycles supported reasoning in place and toggles native Plan mode.
-Settings apply to the next native turn without stopping active work.
+A session uses one editable panel with Request, Answer and Progress tabs. Answer
+is the default and excludes public reasoning/commentary; Progress retains those
+summaries separately. Each response/progress page includes a brief original
+request quote and an explicit request index; the full input stays under Request.
+Earlier/Later request navigates exchanges; Page stays within the selected tab.
+Latest returns to the latest Answer. Only viewing its final page acknowledges a
+completion; Request/Progress never mark it read. The animated activity button
+shows the current native work and elapsed time even while older history is open.
+It opens Latest. Config has no navigation button. Direct model/effort/Plan
+controls apply to the next turn without interrupting work. Details and Pause
+lead the chat controls; Pause retains native identity/history.
 
-Details contains title, host, directory, location, creation/request/response/
-completion times and free disk space. Rename and Close live here. Times use
+Details uses separate bold identity/status, Location, Timeline and Storage blocks.
+It contains title, host, directory, location, creation/request/response/completion
+times and free disk space. Rename and Close live here. Times use
 Europe/Warsaw and their date-specific UTC offset. Navigation leaves work running;
 Stop interrupts it; Close ends the session without deleting project files.
 The bot has no archive browser or reopen action; closed history remains stored.
@@ -189,3 +199,22 @@ stalled consumer. Advance the heartbeat after durable acceptance/control handlin
 not before the potentially failing serialization. A live process alone is not a
 healthy interactive bot. Tests cover typed callbacks/replies with preview options,
 subsequent commands, expired acknowledgements and stale polling health.
+
+## Completion notices and image delivery
+
+A terminal event sends a short standalone owner notification containing location,
+session name and outcome (finished, failed, interrupted or the native terminal
+status). A durable event-keyed delivery record prevents resending a known success
+on restart; failed sends remain pending. Notifications never mark a result read
+or replace the working panel. Ignore historical events predating the feature's
+first activation. Session lists retain their explicit-view unread count.
+
+The Core attachment contract copies explicitly selected PNG/JPEG/WebP files into
+private uploads, scoped to session and user-request anchor. The bot sends these
+as downloadable original documents, retains their references in history, and
+provides an Images gallery for the selected request. Navigation and panel
+cleanup never delete delivered files or notices. No arbitrary host files are
+exported automatically. Producers register chosen images through the Core API;
+the frontend does not import Core code. Image delivery has the same durable
+known-success retry behavior as completion notices and does not acknowledge an
+answer as read.

@@ -141,3 +141,37 @@ def test_session_statuses_keep_question_queue_read_and_failure_contracts_distinc
         assert expected in parsed.text
         assert "&lt;b&gt;Literal&lt;/b&gt;" in html
         assert "<i>(~" in html
+
+
+def test_answer_request_and_progress_views_keep_authors_and_usage_unknowns_distinct():
+    from telegram_vibecoding.presentation import quota_summary
+
+    conversation = {
+        "user": {"payload": {"text": "Original request"}},
+        "replies": [
+            {"kind": "reasoning_summary", "payload": {"text": "Public summary"}},
+            {"kind": "message", "payload": {"text": "Working update", "phase": "commentary"}},
+            {"kind": "message", "payload": {"text": "Final response", "phase": "final_answer"}},
+        ],
+    }
+    answer = "".join(conversation_parts(conversation, rich=True, view="answer"))
+    progress = "".join(conversation_parts(conversation, rich=True, view="progress"))
+    request = "".join(conversation_parts(conversation, rich=True, view="request"))
+    assert "Final response" in answer and "Public summary" not in answer and "Working update" not in answer
+    assert "Public summary" in progress and "Working update" in progress and "Final response" not in progress
+    assert "Original request" in request and "Final response" not in request
+    assert "unavailable" in quota_summary({"available": False})
+    limits = {
+        "available": True,
+        "rateLimitsByLimitId": {
+            "codex": {"primary": {"usedPercent": 15, "windowDurationMins": 10080, "resetsAt": 1793382990}},
+            "other": {
+                "limitName": "Other <bucket>",
+                "primary": {"usedPercent": 50, "windowDurationMins": 300, "resetsAt": None},
+            },
+        },
+    }
+    shown = quota_summary(limits)
+    assert "85% left" in shown and "7d" in shown and "5h" in shown
+    assert "Warsaw (CET, UTC+01:00)" in shown
+    assert "Other &lt;bucket&gt;" in shown and "Reset: —" in shown

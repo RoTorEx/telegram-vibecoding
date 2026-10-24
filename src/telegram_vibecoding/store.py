@@ -46,6 +46,9 @@ class BotStore(Database):
     def __init__(self, path: Path):
         super().__init__(path)
         self.db.executescript("""
+            CREATE TABLE IF NOT EXISTS notifications(
+                event_id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, kind TEXT NOT NULL,
+                payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', telegram_id INTEGER);
             CREATE TABLE IF NOT EXISTS session_reads(
                 session_id TEXT PRIMARY KEY, completion_id INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);

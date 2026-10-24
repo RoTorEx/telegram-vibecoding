@@ -21,7 +21,7 @@ def relative_age(value: float | None, now: float | None = None) -> str:
     return f"{seconds}s"
 
 
-def session_label(session: dict, viewed: int = 0, *, rich: bool = False) -> str:
+def session_label(session: dict, viewed: int = 0, *, rich: bool = False, with_name: bool = True) -> str:
     status = session["status"]
     pending = session.get("pending_requests", 0)
     completion = session.get("last_completed_event") or 0
@@ -52,9 +52,10 @@ def session_label(session: dict, viewed: int = 0, *, rich: bool = False) -> str:
         marker += f" · Queued: {pending}"
     age = session.get("last_interaction", session.get("last_response"))
     suffix = f"(~{relative_age(age)})" if age is not None else ""
+    label = f"{session['name']} · {marker}" if with_name else marker
     if rich:
-        return escape(f"{session['name']} · {marker}") + (f" <i>{suffix}</i>" if suffix else "")
-    return f"{session['name']} · {marker}" + (f" {suffix}" if suffix else "")
+        return escape(label) + (f" <i>{suffix}</i>" if suffix else "")
+    return label + (f" {suffix}" if suffix else "")
 
 
 def progress_prose(text: str) -> str:
@@ -115,7 +116,9 @@ def curated_models(models: list[dict]) -> list[dict]:
     return result or visible[:3]
 
 
-def conversation_parts(conversation: dict, live: dict | None = None, *, rich: bool = False) -> list[str]:
+def conversation_parts(
+    conversation: dict, live: dict | None = None, *, rich: bool = False, view: str = "all"
+) -> list[str]:
     literal = escape if rich else str
     formatted = render_markdown if rich else str
     user = conversation.get("user")
@@ -147,6 +150,10 @@ def conversation_parts(conversation: dict, live: dict | None = None, *, rich: bo
                 append_progress(p.get("text", ""), "Progress")
             else:
                 blocks.append(("🤖 Codex · Answer", formatted(p.get("text", ""))))
+        elif event["kind"] == "attachment":
+            blocks.append(
+                ("🖼 Codex · Image", literal(p["name"]) + "\nOpen Images below to download the original.")
+            )
         elif event["kind"] == "error":
             blocks.append(("⚠️ Core · Error", literal(p.get("text", "Unknown error"))))
         elif event["kind"] == "question":
@@ -174,6 +181,21 @@ def conversation_parts(conversation: dict, live: dict | None = None, *, rich: bo
                 append_progress(parts[key])
     if len(blocks) == 1:
         blocks.append(("🤖 Codex", "Waiting for a response…"))
+    if view == "request":
+        blocks = blocks[:1]
+    elif view == "answer":
+        blocks = [block for block in blocks[1:] if "Progress" not in block[0] and "Reasoning" not in block[0]]
+        if not blocks:
+            blocks = [
+                (
+                    "🤖 Codex · Answer",
+                    "Working… The answer will appear here." if live else "No answer for this request yet.",
+                )
+            ]
+    elif view == "progress":
+        blocks = [block for block in blocks[1:] if "Progress" in block[0] or "Reasoning" in block[0]]
+        if not blocks:
+            blocks = [("💬 Codex · Progress", "No public progress for this request.")]
     pages = []
     page = ""
     divider = "\n\n━━━━━━━━━━━━━━━━\n\n"
@@ -213,3 +235,44 @@ def split_text(text: str, limit: int = PART_UNITS) -> list[str]:
     if current:
         result.append("".join(current))
     return result
+
+
+def quota_summary(data: dict, *, compact: bool = False) -> str:
+    if not data.get("available"):
+        return "Limits are unavailable from Codex."
+    buckets = data.get("rateLimitsByLimitId") or {"codex": data.get("rateLimits")}
+    sections = []
+    for key, bucket in buckets.items():
+        if not bucket:
+            continue
+        windows = []
+        for field in ("primary", "secondary"):
+            window = bucket.get(field)
+            if not window:
+                continue
+            minutes = window.get("windowDurationMins")
+            duration = (
+                (
+                    f"{minutes // 1440}d"
+                    if minutes % 1440 == 0
+                    else f"{minutes // 60}h"
+                    if minutes % 60 == 0
+                    else f"{minutes}m"
+                )
+                if minutes
+                else field.title()
+            )
+            used = window.get("usedPercent")
+            remaining = (
+                f"{max(0, min(100, 100 - used)):g}% left"
+                if isinstance(used, (int, float))
+                else "Usage unavailable"
+            )
+            reset = timestamp(window.get("resetsAt"))
+            windows.append(f"{duration} · <b>{remaining}</b>\n↳ Reset: {escape(reset)}")
+        if windows:
+            title = bucket.get("limitName") or bucket.get("limitId") or key
+            sections.append(f"<b>{escape(title)}</b>\n" + "\n".join(windows))
+        if compact and sections:
+            break
+    return "\n\n".join(sections) or "No quota windows were returned by Codex."

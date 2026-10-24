@@ -18,6 +18,8 @@ class CoreClient:
         async with self.http.request(
             "POST" if body is not None else "GET", "http://engine" + path, json=body
         ) as r:
+            if r.status == 404:
+                raise ValueError("Core endpoint is unavailable in the running version")
             value = await r.json()
             if r.status >= 500:
                 raise ConnectionError(value.get("error", "Engine temporarily unavailable"))

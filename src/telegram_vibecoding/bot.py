@@ -31,6 +31,7 @@ from aiogram.types import (
     BotCommand,
     BotCommandScopeChat,
     CallbackQuery,
+    FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
@@ -145,6 +146,8 @@ class BotRuntime:
         self.instance = instance_file.read_text().strip() if instance_file.exists() else uuid.uuid4().hex
         settings.prepare()
         self.store = BotStore(settings.data_dir / "bot.db")
+        if not self.store.get("notifications_since"):
+            self.store.set("notifications_since", str(time.time()))
         last_input = self.store.one(
             "SELECT MAX(CAST(json_extract(body,'$.message.message_id') AS INTEGER)) AS id FROM inbox"
         )
@@ -293,6 +296,10 @@ class BotRuntime:
     async def render_panel(self):
         bg = self.background.bg(self.bot, self.settings.allowed_user_id, self.settings.allowed_user_id)
         async with foreground(bg) as manager:
+            if manager.current_context().state == Screens.config and self.store.get("selected"):
+                self.store.set("mode", "chat")
+                self.store.set("screen", Screens.chat.state or "")
+                await manager.switch_to(Screens.chat, show_mode=ShowMode.EDIT)
             await manager.show(ShowMode.EDIT)
 
     @staticmethod
@@ -400,6 +407,22 @@ class BotRuntime:
             return False
         sid, mode = self.store.get("selected") or None, self.store.get("mode", "menu")
         message = update.get("message", {})
+        new_session_path = (
+            self.store.get("location")
+            if mode == "menu"
+            and self.store.get("screen") == Screens.sessions.state
+            and not self.is_control(update)
+            and (message.get("text") or message.get("photo") or message.get("voice"))
+            else ""
+        )
+        new_session_key = ""
+        if new_session_path:
+            if self.store.get("starting_session_path") != new_session_path or not self.store.get(
+                "starting_session_key"
+            ):
+                self.store.set("starting_session_path", new_session_path)
+                self.store.set("starting_session_key", f"telegram:new:{update['update_id']}")
+            new_session_key = self.store.get("starting_session_key")
         if message.get("message_id"):
             self.store.set(
                 "last_user_message_id",
@@ -407,16 +430,21 @@ class BotRuntime:
             )
         if group := message.get("media_group_id"):
             first = self.store.one(
-                "SELECT session_id,mode FROM inbox WHERE json_extract(body,'$.message.media_group_id')=? ORDER BY id LIMIT 1",
+                "SELECT session_id,mode,body FROM inbox WHERE json_extract(body,'$.message.media_group_id')=? ORDER BY id LIMIT 1",
                 (group,),
             )
             if first:
                 sid, mode = first["session_id"], first["mode"]
+                first_capture = json.loads(first["body"]).get("_relay", {})
+                new_session_path = first_capture.get("new_session_path", "")
+                new_session_key = first_capture.get("new_session_key", "")
         body = {
             **update,
             "_relay": {
                 "input_action": self.store.get("input_action"),
                 "input_session": self.store.get("input_session"),
+                "new_session_path": new_session_path,
+                "new_session_key": new_session_key,
             },
         }
         return self.store.accept(update["update_id"], body, sid, mode)
@@ -585,6 +613,33 @@ class BotRuntime:
             for r in rows:
                 self.store.processed(r["id"])
             return
+        if new_path := bodies[0].get("_relay", {}).get("new_session_path"):
+            session = await self.engine.call(
+                "/sessions",
+                {
+                    "cwd": new_path,
+                    "request_id": bodies[0]["_relay"].get("new_session_key") or f"telegram:new:{row['id']}",
+                },
+            )
+            sid = session["id"]
+            with self.store.db:
+                self.store.db.executemany(
+                    "UPDATE inbox SET session_id=?,mode='chat' WHERE id=?",
+                    [(sid, item["id"]) for item in rows],
+                )
+            rows = [{**item, "session_id": sid, "mode": "chat"} for item in rows]
+            row = rows[0]
+            if self.store.get("screen") == Screens.sessions.state and self.store.get("location") == new_path:
+                async with self.ui_lock:
+                    self.store.set("selected", sid)
+                    self.store.set("history_content", "answer")
+                    self.store.set("history_anchor", "")
+                    self.store.set("history_part", "-1")
+                    bg = self.background.bg(
+                        self.bot, self.settings.allowed_user_id, self.settings.allowed_user_id
+                    )
+                    async with foreground(bg) as manager:
+                        await open_screen(manager, Screens.chat)
         if row["mode"] == "input":
             await self.process_input(row, bodies[0])
         elif row["mode"] != "chat" or not row["session_id"]:
@@ -623,6 +678,7 @@ class BotRuntime:
                 if self.store.get("selected") == sid:
                     self.store.set("history_anchor", "")
                     self.store.set("history_part", "-1")
+                    self.store.set("history_content", "answer")
                     await self.refresh_panel()
         for r in rows:
             self.store.processed(r["id"])
@@ -667,6 +723,16 @@ class BotRuntime:
             await asyncio.sleep(0.3)
 
     def queue_update(self, event: dict):
+        if (
+            event["kind"] in {"completed", "attachment"}
+            and event.get("session_id")
+            and event.get("created", time.time()) >= float(self.store.get("notifications_since"))
+        ):
+            with self.store.db:
+                self.store.db.execute(
+                    "INSERT OR IGNORE INTO notifications(event_id,session_id,kind,payload) VALUES(?,?,?,?)",
+                    (event["id"], event["session_id"], event["kind"], json.dumps(event["payload"])),
+                )
         if event["kind"] == "question":
             qid = event["payload"]["question_id"]
             self.store.set("question_session:" + qid, event["session_id"])
@@ -713,8 +779,74 @@ class BotRuntime:
             )
         return True
 
+    async def send_attachment(self, sid: str, aid: str, *, locked=False):
+        records = await self.engine.call(f"/sessions/{sid}/attachments")
+        record = next((r for r in records if r["id"] == aid), None)
+        if record is None:
+            raise ValueError("Image is no longer available")
+        path = Path(record["path"]).resolve(strict=True)
+        if not path.is_relative_to((self.settings.data_dir / "uploads").resolve()) or not path.is_file():
+            raise ValueError("Image is outside private uploads")
+        if path.stat().st_size > 20_000_000:
+            raise ValueError("Image exceeds 20 MB")
+
+        async def publish():
+            return await self.bot.send_document(
+                self.settings.allowed_user_id,
+                FSInputFile(path, filename=record["name"]),
+                caption="🖼 " + record["name"],
+                parse_mode=None,
+            )
+
+        if locked:
+            return await publish()
+        async with self.send_lock:
+            await self.throttle()
+            return await publish()
+
+    async def deliver_notifications(self):
+        rows = self.store.rows(
+            "SELECT * FROM notifications WHERE status='pending' ORDER BY event_id LIMIT 10"
+        )
+        for row in rows:
+            payload = json.loads(row["payload"])
+            session = await self.engine.call(f"/sessions/{row['session_id']}")
+            projects = await self.engine.call("/projects")
+            place = next(
+                (p["name"] for p in projects if p["path"] == session["cwd"]), Path(session["cwd"]).name
+            )
+            async with self.send_lock:
+                await self.throttle()
+                if row["kind"] == "attachment":
+                    sent = await self.send_attachment(
+                        row["session_id"], payload["attachment_id"], locked=True
+                    )
+                else:
+                    label = {
+                        "completed": "✅ Finished",
+                        "interrupted": "⏹ Interrupted",
+                        "failed": "⚠️ Failed",
+                    }.get(payload.get("status"), "⚠️ " + str(payload.get("status", "Ended")))
+                    sent = await self.bot.send_message(
+                        self.settings.allowed_user_id,
+                        f"{label}\n📍 {place}\n💬 {session['name']}",
+                        parse_mode=None,
+                        disable_notification=False,
+                    )
+                with self.store.db:
+                    self.store.db.execute(
+                        "UPDATE notifications SET status='sent',telegram_id=? WHERE event_id=?",
+                        (sent.message_id, row["event_id"]),
+                    )
+
     async def delivery_loop(self):
         while not self.stop_event.is_set():
+            try:
+                await self.deliver_notifications()
+            except TelegramRetryAfter as exc:
+                await asyncio.sleep(exc.retry_after)
+            except Exception as exc:
+                log.warning("Notification retained: %s", type(exc).__name__)
             try:
                 await self.deliver_pending()
                 async with self.send_lock:
@@ -739,6 +871,7 @@ class BotRuntime:
                     Screens.journal.state,
                     Screens.edit_sessions.state,
                     Screens.terminal.state,
+                    Screens.limits.state,
                 }:
                     now = time.monotonic()
                     if now - self.last_list_refresh >= 5:

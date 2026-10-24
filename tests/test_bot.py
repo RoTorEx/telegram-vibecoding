@@ -137,7 +137,7 @@ async def test_menu_text_does_not_reach_previous_agent(app):
     runtime.store.set("mode", "menu")
     runtime.capture(update(10, "this is not a prompt"))
     await runtime.process_messages([runtime.store.one("SELECT * FROM inbox WHERE id=10")])
-    assert not native.calls
+    assert not any(method in {"thread/start", "turn/start", "turn/steer"} for method, _ in native.calls)
     assert any(b.text == "📍 Location" for row in panel(transport).reply_markup.inline_keyboard for b in row)
 
 
@@ -185,7 +185,7 @@ async def test_real_dialog_deck_and_navigation_do_not_start_native_work(app):
     assert "💬 Sessions" not in texts and "➕ New" not in texts
     assert [b.text for b in markup.inline_keyboard[-1]] == ["⬅️ Back", "🏠 Deck"]
     assert runtime.store.get("mode") == "menu"
-    assert not native.calls
+    assert not any(method in {"thread/start", "turn/start", "turn/steer"} for method, _ in native.calls)
 
 
 async def test_fsm_survives_new_storage_instance(app):
@@ -239,7 +239,7 @@ async def test_session_picker_uses_real_dialog_callbacks(app, host):
     runtime.capture(update(70, "/sessions"))
     await runtime.process_control(runtime.store.one("SELECT * FROM inbox WHERE id=70"))
     panel = next(m for m in reversed(transport.calls) if isinstance(m, SendMessage))
-    assert "1. Pick me" in panel.text
+    assert "1. <b>Pick me</b>" in panel.text
     button = next(b for row in panel.reply_markup.inline_keyboard for b in row if b.text == "1")
     callback = {
         "update_id": 71,
@@ -261,7 +261,7 @@ async def test_session_picker_uses_real_dialog_callbacks(app, host):
     await runtime.process_control(runtime.store.one("SELECT * FROM inbox WHERE id=71"))
     assert runtime.store.get("selected") == target["id"]
     assert runtime.store.get("mode") == "chat"
-    assert not native.calls
+    assert not any(method in {"thread/start", "turn/start", "turn/steer"} for method, _ in native.calls)
 
 
 async def test_valid_image_download_persists_once_and_keeps_permissions(app):
@@ -379,31 +379,27 @@ async def test_location_session_config_details_are_one_editable_panel(app):
     sid = runtime.store.get("selected")
     assert "voice recording" in panel(transport).text
     assert not any(m == "turn/start" for m, p in native.calls)
-    await click(app, "⚙️ Config")
     exits(transport)
-    await click(app, "Reasoning: medium")
+    await click(app, "🧠 medium")
     assert engine.store.session(sid)["effort"] == "high"
-    await click(app, "Reasoning: high")
+    await click(app, "🧠 high")
     assert engine.store.session(sid)["effort"] == "medium"
-    await click(app, "Plan mode: Off")
+    await click(app, "📝 Plan: Off")
     assert engine.store.session(sid)["collaboration_mode"] == "plan"
-    await click(app, "Model: Test")
+    await click(app, "🤖 Test")
     exits(transport)
     await click(app, "Test")
-    assert "Config" in panel(transport).text
-    await click(app, "⬅️ Back")
     assert runtime.store.get("mode") == "chat"
+    assert "Model:" not in panel(transport).text
     await click(app, "ℹ️ Details")
-    assert "Created:" in panel(transport).text and "Last request: —" in panel(transport).text
+    assert "<b>Created</b>" in panel(transport).text and "<b>Last request</b>" in panel(transport).text
     await click(app, "✏️ Rename")
     exits(transport)
-    await click(app, "⚙️ Config")
-    await click(app, "⬅️ Back")
     assert runtime.store.get("mode") == "input"
     assert runtime.store.get("panel_id") == first_id
     await command(app, "A clear session title")
     assert engine.store.session(sid)["name"] == "A clear session title"
-    assert "Details" in panel(transport).text
+    assert "Session details" in panel(transport).text
     await click(app, "⬅️ Back")
     assert "A clear session title" in panel(transport).text
     await click(app, "🏠 Deck")
@@ -432,7 +428,7 @@ async def test_stream_delivery_history_and_navigation_preserve_one_panel(app, ho
             runtime.queue_update(event)
         assert await runtime.deliver_pending()
         assert f"Exact native answer {index}" in panel(transport).text
-    await click(app, "◀ Exchange")
+    await click(app, "◀ Earlier request")
     assert "Original request 0" in panel(transport).text and "Exact native answer 0" in panel(transport).text
     await click(app, "Latest")
     assert "Exact native answer 1" in panel(transport).text
@@ -529,7 +525,7 @@ async def test_panel_state_survives_runtime_restart_and_native_questions_stay_in
     await runtime.refresh_panel()
     assert "Which direction?" in panel(transport).text
     await click(app, "Simple")
-    assert native.calls[-1][0] == "response"
+    assert any(method == "response" for method, _ in native.calls)
     first_id = runtime.store.get("panel_id")
     replacement = BotRuntime(runtime.settings, bot=runtime.bot, engine=runtime.engine)
     replacement.throttle = runtime.throttle
@@ -717,8 +713,8 @@ async def test_terminal_reports_each_running_component_version_independently(app
     await command(app, "/start")
     identity = runtime.store.get("panel_id")
     await click(app, "💻 Terminal")
-    assert f"Telegram: {__version__}" in panel(transport).text
-    assert "Core: 2.7.4" in panel(transport).text
+    assert f"Telegram: <b>{__version__}</b>" in panel(transport).text
+    assert "Core: <b>2.7.4</b>" in panel(transport).text
     exits(transport)
     await click(app, "⬅️ Back")
     assert runtime.store.get("panel_id") == identity
@@ -741,7 +737,7 @@ async def test_upgrade_recovers_latest_input_from_existing_inbox_and_moves_panel
         assert int(replacement.store.get("panel_id")) > 185
         assert old not in transport.messages
         assert len(transport.messages) == 1
-        assert not native.calls
+        assert not any(method in {"thread/start", "turn/start", "turn/steer"} for method, _ in native.calls)
     finally:
         replacement.store.close()
 
@@ -802,7 +798,7 @@ async def test_failed_old_panel_cleanup_does_not_repeat_successful_send(app):
 async def test_every_command_and_plain_menu_input_moves_the_current_panel(app):
     runtime, transport, engine, native = app
     await runtime.initialize_panel()
-    for text in ["/menu", "/help", "/sessions", "/new", "/stop", "/unknown", "ordinary menu input"]:
+    for text in ["/menu", "/help", "/sessions", "/new", "/stop", "/unknown", "/menu", "ordinary menu input"]:
         previous = int(runtime.store.get("panel_id"))
         await command(app, text)
         current = int(runtime.store.get("panel_id"))
@@ -810,7 +806,7 @@ async def test_every_command_and_plain_menu_input_moves_the_current_panel(app):
         assert previous not in transport.messages
         assert len(transport.messages) == 1
         exits(transport)
-    assert not native.calls
+    assert not any(method in {"thread/start", "turn/start", "turn/steer"} for method, _ in native.calls)
 
 
 async def test_absolute_directory_input_is_not_mistaken_for_an_unknown_command(app):
@@ -821,7 +817,7 @@ async def test_absolute_directory_input_is_not_mistaken_for_an_unknown_command(a
     await command(app, "/tmp")
     assert runtime.store.get("location") == "/private/tmp" or runtime.store.get("location") == "/tmp"
     assert "Unknown command" not in panel(transport).text
-    assert not native.calls
+    assert not any(method in {"thread/start", "turn/start", "turn/steer"} for method, _ in native.calls)
 
 
 async def test_live_feedback_animates_public_summaries_without_tool_or_code_output(app, monkeypatch):
@@ -851,16 +847,18 @@ async def test_live_feedback_animates_public_summaries_without_tool_or_code_outp
     )
     monkeypatch.setattr(presentation.time, "time", lambda: 110)
     await runtime.refresh_panel()
+    await click(app, "💭 Progress")
     identity = runtime.store.get("panel_id")
     before = panel(transport).text
-    assert "00:10 elapsed" in before
-    assert "Reasoning: medium" in before
+    labels = [button.text for row in panel(transport).reply_markup.inline_keyboard for button in row]
+    assert any("00:10 elapsed" in label for label in labels)
+    assert "🧠 medium" in labels and "Reasoning: medium" not in before
     assert "Checking behavior." in before and "Then verifying recovery." in before
     assert all(s not in before for s in ["SECRET_CODE", "SECRET_COMMAND", "LIVE_CODE", "TOOL_OUTPUT"])
     monkeypatch.setattr(presentation.time, "time", lambda: 112)
     await runtime.refresh_panel()
-    after = panel(transport).text
-    assert after != before and "00:12 elapsed" in after
+    labels = [button.text for row in panel(transport).reply_markup.inline_keyboard for button in row]
+    assert any("00:12 elapsed" in label for label in labels)
     assert runtime.store.get("panel_id") == identity
     engine.on_event(
         "item/completed",
@@ -868,12 +866,11 @@ async def test_live_feedback_animates_public_summaries_without_tool_or_code_outp
     )
     native.finish(thread, text="Final answer")
     await runtime.refresh_panel()
+    assert "Checked behavior." in panel(transport).text
+    await click(app, "🤖 Answer")
     completed = panel(transport).text
-    assert "elapsed" not in completed
-    assert completed.index("Reasoning</b>\n\nChecked behavior.") < completed.index(
-        "Codex · Answer</b>\n\nFinal answer"
-    )
-    assert "━━━━━━━━━━━━━━━━" in completed
+    assert "Final answer" in completed and "Checked behavior." not in completed
+    assert "Codex · Answer</b>" in completed
     assert len(transport.messages) == 1
 
 
@@ -898,7 +895,7 @@ async def test_top_level_menus_do_not_expose_configuration_from_a_remembered_ses
     assert not {"⚙️ Config", "🗃 Archived"}.intersection(labels)
     exits(transport)
     assert engine.store.session(selected["id"])["name"] == "Remembered session"
-    assert not native.calls
+    assert not any(method in {"thread/start", "turn/start", "turn/steer"} for method, _ in native.calls)
 
 
 @pytest.mark.parametrize(
@@ -953,14 +950,14 @@ async def test_session_pages_show_eight_entries_and_paired_arrows_with_working_m
     runtime.store.set("location", str(tmp_path))
     await command(app, "/sessions")
     current = panel(transport)
-    assert "1. Work 11 · ⏳" in current.text
-    assert "8. Work 04 · 💬" in current.text
+    assert "1. <b>Work 11</b>\n⏳" in current.text
+    assert "8. <b>Work 04</b>\n💬" in current.text
     assert "Work 03" not in current.text
     assert any([button.text for button in row] == ["◀", "▶"] for row in current.reply_markup.inline_keyboard)
     await click(app, "◀")
     assert "Page 1/2" in panel(transport).text
     await click(app, "▶")
-    assert "1. Work 03" in panel(transport).text and "4. Work 00" in panel(transport).text
+    assert "1. <b>Work 03</b>" in panel(transport).text and "4. <b>Work 00</b>" in panel(transport).text
     assert "Work 04" not in panel(transport).text
     assert any(
         [button.text for button in row] == ["◀", "▶"] for row in panel(transport).reply_markup.inline_keyboard
@@ -1039,7 +1036,11 @@ async def test_stop_is_usable_while_voice_is_transcribing(app):
     await runtime.process_messages([runtime.store.one("SELECT * FROM inbox WHERE id=3200")])
     await entered.wait()
     await runtime.refresh_panel()
-    assert "Transcribing voice" in panel(transport).text
+    assert any(
+        "Transcribing voice" in button.text
+        for row in panel(transport).reply_markup.inline_keyboard
+        for button in row
+    )
     await click(app, "⏸ Pause")
     assert engine.store.request("telegram:3200")["state"] == "cancelled"
     assert engine.store.session(sid)["status"] == "interrupted"
@@ -1082,13 +1083,13 @@ async def test_empty_draft_is_hidden_but_input_and_named_sessions_remain(app, tm
     labels = [b.text for row in panel(transport).reply_markup.inline_keyboard for b in row]
     assert labels == ["➕ New", "✏️ Edit", "⬅️ Back", "🏠 Deck"]
     assert engine.store.session(draft["id"])["archived"] == 0
-    assert not native.calls
+    assert not any(method in {"thread/start", "turn/start", "turn/steer"} for method, _ in native.calls)
     engine.store.event(draft["id"], "user", {"text": "Captured input"})
     await runtime.refresh_panel()
-    assert "1. New session" in panel(transport).text
+    assert "1. <b>New session</b>" in panel(transport).text
     engine.store.update_session(draft["id"], name="Named draft")
     await runtime.refresh_panel()
-    assert "1. Named draft" in panel(transport).text
+    assert "1. <b>Named draft</b>" in panel(transport).text
 
 
 async def test_followups_steer_active_turn_and_project_navigation_keeps_targets(app, tmp_path):
@@ -1182,7 +1183,7 @@ async def test_background_completion_does_not_mark_read_and_latest_acknowledges(
     second = engine.store.event(sid, "completed", {"status": "completed"})
     await runtime.refresh_panel()
     assert runtime.store.viewed(sid) == first < second
-    await click(app, "◀ Exchange")
+    await click(app, "◀ Earlier request")
     assert runtime.store.viewed(sid) == first
     await click(app, "Latest")
     assert runtime.store.viewed(sid) == second
@@ -1226,7 +1227,7 @@ async def test_restart_notice_publishes_once_per_boot_preserving_selected_view(a
     await runtime.startup_panel()
     assert runtime.store.get("panel_id") != latest
     assert len(transport.messages) == 3
-    assert not native.calls
+    assert not any(method in {"thread/start", "turn/start", "turn/steer"} for method, _ in native.calls)
 
 
 async def test_new_completion_during_publication_stays_unread(app):
@@ -1254,7 +1255,7 @@ async def test_new_completion_during_publication_stays_unread(app):
     await click(app, "Latest")
     assert later and runtime.store.viewed(sid) == first < later[0]
     await click(app, "🏠 Deck")
-    assert "Unread results: 1" in panel(transport).text
+    assert "Unread: <b>1</b>" in panel(transport).text
 
 
 async def test_failed_restart_send_preserves_panel_and_retries_same_boot(app):
@@ -1291,11 +1292,11 @@ async def test_deck_terminal_edit_archive_and_eight_button_rows(app, host):
         engine.store.event(session["id"], "user", {"text": f"Input {index}"})
         ids.append(session["id"])
     await command(app, "/start")
-    assert panel(transport).text.startswith("🏠 Main Deck")
+    assert panel(transport).text.startswith("<b>🏠 Main Deck</b>")
     assert "Location:" not in panel(transport).text and cwd not in panel(transport).text
     assert [b.text for b in panel(transport).reply_markup.inline_keyboard[0]] == ["⚙️ Settings", "💻 Terminal"]
     await click(app, "💻 Terminal")
-    assert "Core:" in panel(transport).text and "Native agent: Running" in panel(transport).text
+    assert "Core:" in panel(transport).text and "Native agent: 🟢 Running" in panel(transport).text
     await click(app, "⬅️ Back")
     await click(app, "📍 Location")
     await click(app, "1")
@@ -1335,18 +1336,19 @@ async def test_exchange_and_text_pages_are_independent_and_pause_keeps_identity(
     await settle(engine)
     await runtime.refresh_panel()
     rows = [[b.text for b in row] for row in panel(transport).reply_markup.inline_keyboard]
-    assert rows[0] == ["⚙️ Config", "ℹ️ Details"]
-    assert rows[1] == ["◀ Exchange", "⏸ Pause"]
-    await click(app, "◀ Exchange")
+    assert rows[0] == ["ℹ️ Details", "⏸ Pause"]
+    assert rows[1] == ["🤖 Test", "🧠 medium", "📝 Plan: Off"]
+    await click(app, "◀ Earlier request")
     view = json.loads(runtime.store.get("history_view"))
     anchor = view["anchor"]
-    assert "Exchange 1/2" in panel(transport).text and "Page 1/" in panel(transport).text
+    assert "Request 1 of 2" in panel(transport).text
+    await click(app, "👤 Request")
     assert "<b>👤 You</b>" in panel(transport).text and "<blockquote>" in panel(transport).text
     await click(app, "Page ▶")
     assert json.loads(runtime.store.get("history_view"))["anchor"] == anchor
-    assert "Exchange 1/2" in panel(transport).text
-    await click(app, "Exchange ▶")
-    assert "Exchange 2/2" in panel(transport).text and "Second request" in panel(transport).text
+    assert "Request 1 of 2" in panel(transport).text
+    await click(app, "Later request ▶")
+    assert "Request 2 of 2" in panel(transport).text and "Second request" in panel(transport).text
     await click(app, "Latest")
     assert html_length(panel(transport).text) < 4096
     await click(app, "⏸ Pause")
@@ -1381,7 +1383,8 @@ async def test_unauthorized_events_cannot_navigate_or_dispatch_even_if_retained(
     runtime.store.accept(9100, body, None, "menu")
     await runtime.process_control(runtime.store.one("SELECT * FROM inbox WHERE id=9100"))
     assert runtime.store.get("panel_id") == panel_before
-    assert not engine.store.sessions() and not native.calls
+    assert not engine.store.sessions()
+    assert not any(method in {"thread/start", "turn/start", "turn/steer"} for method, _ in native.calls)
 
 
 async def test_typed_telegram_callback_preview_does_not_block_following_commands(app):
@@ -1420,7 +1423,7 @@ async def test_typed_telegram_callback_preview_does_not_block_following_commands
         await runtime.receive_update(Update.model_validate(update(uid, command_text)))
         assert runtime.store.one("SELECT status FROM inbox WHERE id=?", (uid,))["status"] == "done"
     assert float(runtime.store.get("poll_heartbeat")) > time.time() - 10
-    assert not native.calls
+    assert not any(method in {"thread/start", "turn/start", "turn/steer"} for method, _ in native.calls)
 
 
 async def test_reply_with_preview_and_media_is_durably_captured(app):
@@ -1519,3 +1522,106 @@ async def test_startup_panel_failure_does_not_resend_accepted_notification(app):
     assert notice_id in transport.messages
     assert sum(isinstance(call, SendMessage) and "is online" in call.text for call in transport.calls) == 1
     assert len(transport.messages) == 2
+
+
+async def test_voice_from_session_list_creates_captured_location_session_once(app, tmp_path):
+    runtime, transport, engine, native = app
+    await command(app, "/start")
+    await click(app, "📍 Location")
+    await click(app, "1")
+    home = runtime.store.get("location")
+    entered = []
+
+    async def download(file_id, destination):
+        destination.write(b"OggS-recording")
+
+    async def transcribe(path):
+        entered.append(path)
+        return {"text": "Original voice request", "language": "en"}
+
+    runtime.bot.download = download
+    engine.speech.transcribe = transcribe
+    runtime.capture(update(9900, "", voice={"file_id": "voice", "file_unique_id": "voice", "duration": 149}))
+    row = runtime.store.one("SELECT * FROM inbox WHERE id=9900")
+    runtime.store.set("location", str(tmp_path))
+    await runtime.process_messages([row])
+    await settle(engine)
+    session = engine.store.sessions()[0]
+    assert session["cwd"] == home
+    assert engine.store.request("telegram:9900")["session_id"] == session["id"]
+    assert len(entered) == 1
+    # An intake retry uses the same creation/input identities and cached download.
+    await runtime.process_messages([row])
+    await settle(engine)
+    assert len(engine.store.sessions()) == 1
+    assert sum(method == "turn/start" for method, _ in native.calls) == 1
+    assert sum(method == "turn/steer" for method, _ in native.calls) == 0
+    assert runtime.store.get("location") == str(tmp_path)
+
+
+async def test_finished_notice_is_short_durable_and_does_not_acknowledge_result(app, host):
+    runtime, transport, engine, native = app
+    await command(app, "/start")
+    session = engine.store.create_session(str(host[0].data_dir.parent), "Background result", "medium")
+    sid = session["id"]
+    engine.store.event(sid, "user", {"text": "Work"})
+    engine.store.event(sid, "message", {"text": "Long answer must stay in the session"})
+    eid = engine.store.event(sid, "completed", {"status": "completed"})
+    event = next(e for e in engine.store.events(0) if e["id"] == eid)
+    runtime.queue_update(event)
+    runtime.queue_update(event)
+    await runtime.deliver_notifications()
+    notice = [
+        call for call in transport.calls if isinstance(call, SendMessage) and "✅ Finished" in call.text
+    ]
+    assert len(notice) == 1 and "Background result" in notice[0].text
+    assert "Long answer" not in notice[0].text and "📍" in notice[0].text
+    assert runtime.store.viewed(sid) == 0
+    await runtime.deliver_notifications()
+    assert sum(isinstance(call, SendMessage) and "✅ Finished" in call.text for call in transport.calls) == 1
+    assert runtime.store.one("SELECT status FROM notifications WHERE event_id=?", (eid,))["status"] == "sent"
+    old = {**event, "id": eid + 100, "created": float(runtime.store.get("notifications_since")) - 1}
+    runtime.queue_update(old)
+    assert runtime.store.one("SELECT event_id FROM notifications WHERE event_id=?", (old["id"],)) is None
+
+
+async def test_registered_image_delivers_original_and_remains_browsable(app, tmp_path):
+    runtime, transport, engine, native = app
+    await command(app, "/start")
+    await click(app, "📍 Location")
+    await click(app, "1")
+    await click(app, "➕ New")
+    sid = runtime.store.get("selected")
+    engine.store.event(sid, "user", {"text": "Draw"})
+    image = tmp_path / "image.png"
+    image.write_bytes(b"\x89PNG\r\n\x1a\nfixture-image")
+    attachment = await runtime.engine.call(f"/sessions/{sid}/attachments", {"path": str(image)})
+    event = next(e for e in engine.store.events(0) if e["kind"] == "attachment")
+    runtime.queue_update(event)
+    await runtime.deliver_notifications()
+    sends = [call for call in transport.calls if isinstance(call, SendDocument)]
+    assert len(sends) == 1 and str(sends[0].document.path) == attachment["path"]
+    await runtime.refresh_panel()
+    await click(app, "📎 Images (1)")
+    await click(app, "1")
+    assert len([call for call in transport.calls if isinstance(call, SendDocument)]) == 2
+    assert runtime.store.viewed(sid) == 0
+
+
+async def test_fast_inputs_from_session_list_share_new_session_intent(app):
+    runtime, transport, engine, native = app
+    await command(app, "/start")
+    await click(app, "📍 Location")
+    await click(app, "1")
+    runtime.capture(update(9950, "First task"))
+    runtime.capture(update(9951, "Add this detail"))
+    for uid in [9950, 9951]:
+        await runtime.process_messages([runtime.store.one("SELECT * FROM inbox WHERE id=?", (uid,))])
+        await settle(engine)
+    assert len(engine.store.sessions()) == 1
+    assert (
+        engine.store.request("telegram:9950")["session_id"]
+        == engine.store.request("telegram:9951")["session_id"]
+    )
+    assert sum(method == "turn/start" for method, _ in native.calls) == 1
+    assert sum(method == "turn/steer" for method, _ in native.calls) == 1
