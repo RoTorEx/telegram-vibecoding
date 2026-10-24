@@ -219,9 +219,9 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
             else session["status"].title()
         )
         content = app.store.get("history_content", "answer")
-        v["request_tab"] = ("• " if content == "request" else "") + "👤 Request"
-        v["answer_tab"] = ("• " if content == "answer" else "") + "🤖 Answer"
-        v["progress_tab"] = ("• " if content == "progress" else "") + "💭 Progress"
+        v["request_tab"] = ("• " if content == "request" else "") + "👤 You"
+        v["answer_tab"] = ("• " if content == "answer" else "") + "🤖 Codex"
+        v["progress_tab"] = ("• " if content == "progress" else "") + "💭 Updates"
         models = (await app.engine.call("/models")).get("data", [])
         model = effective_model(models, session)
         v.update(
@@ -244,7 +244,7 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
                         }
                     )
             conversation = {**conversation, "replies": replies}
-        parts = conversation_parts(conversation, live, rich=True, view=content)
+        parts = conversation_parts(conversation, live, rich=True, view=content, compact=True)
         part = int(app.store.get("history_part", "-1"))
         part = len(parts) - 1 if part < 0 else min(part, len(parts) - 1)
         app.store.set(
@@ -262,22 +262,19 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
         v["history_next"] = part + 1 < len(parts)
         v["exchange_previous"] = conversation["previous"] is not None
         v["exchange_next"] = conversation["next"] is not None
+        v["show_now"] = conversation["next"] is not None or part + 1 < len(parts) or content != "answer"
         header = "<b>💬 " + escape(session["name"][:55]) + "</b>"
-        if conversation["total"]:
-            header += (
-                f"\n<b>Request {conversation['index']} of {conversation['total']} · {content.title()}</b>"
-            )
+        state = (
+            activity_label(current_live, session["effort"], rich=True).split(" · Reasoning:", 1)[0]
+            if current_live
+            else escape(session["status"].title())
+        )
+        header += "\n" + escape(model.get("displayName") or model["id"]) + " · " + state
+        if conversation["total"] > 1 and conversation["next"] is not None:
+            header += f"\n<i>History · {conversation['index']} of {conversation['total']}</i>"
         if len(parts) > 1:
             header += f"\nPage {part + 1} of {len(parts)}"
-        if content != "request" and conversation["user"]:
-            preview = conversation["user"]["payload"].get("text") or "[Image or voice request]"
-            preview = " ".join(preview.split())
-            header += (
-                "\n<blockquote>👤 "
-                + escape(preview[:140] + ("…" if len(preview) > 140 else ""))
-                + "</blockquote>"
-            )
-        v["text"] = header + "\n\n" + parts[part]
+        v["text"] = header + ("\n\n" + parts[part] if parts[part] else "")
         try:
             attachments = await app.engine.call(
                 f"/sessions/{sid}/attachments"
@@ -412,9 +409,7 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
         if html_length(combined) <= 4000:
             v["text"] = combined
         else:
-            v["text"] = (
-                "⚠️ " + escape(notice) + "\n\nUse Latest or Back to continue. Your conversation is retained."
-            )
+            v["text"] = "⚠️ " + escape(notice) + "\n\nUse Back to continue."
     app.receipt_text = v["text"]
     return v
 
@@ -782,21 +777,18 @@ def make_dialog() -> Dialog:
                 Button(Format("{effort_label}"), id="reasoning", on_click=cycle_effort),
                 Button(Format("{plan_label}"), id="plan", on_click=toggle_plan),
             ),
-            Button(Format("{activity_button}"), id="activity", on_click=history),
             Row(
                 Button(Format("{request_tab}"), id="tab_request", on_click=content_tab),
                 Button(Format("{answer_tab}"), id="tab_answer", on_click=content_tab),
                 Button(Format("{progress_tab}"), id="tab_progress", on_click=content_tab),
             ),
             Row(
-                Button(
-                    Const("◀ Earlier request"), id="exchange_prev", on_click=history, when="exchange_previous"
-                ),
-                Button(Const("Later request ▶"), id="exchange_next", on_click=history, when="exchange_next"),
+                Button(Const("◀ Previous"), id="exchange_prev", on_click=history, when="exchange_previous"),
+                Button(Const("Next ▶"), id="exchange_next", on_click=history, when="exchange_next"),
+                Button(Const("⏩ Now"), id="latest", on_click=history, when="show_now"),
             ),
             Row(
                 Button(Const("◀ Page"), id="history_prev", on_click=history, when="history_previous"),
-                Button(Const("Latest"), id="latest", on_click=history),
                 Button(Const("Page ▶"), id="history_next", on_click=history, when="history_next"),
             ),
             Select(

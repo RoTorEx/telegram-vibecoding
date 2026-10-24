@@ -6,9 +6,9 @@ Open @GardenSandbox_bot and send /menu. Choose Location, a numbered host
 directory, then a session. Sending text, images or voice from the location's
 session list starts a new session there. Model/reasoning/Plan controls live in
 the chat; Details groups status, location, timeline, storage, rename and close.
-Request/Answer/Progress tabs separate original input, final output and public
-progress. Earlier/Later request changes the exchange; Page changes only its text.
-The animated activity button remains live while browsing history. Main Deck
+You/Codex/Updates separate original input, agent output and public progress.
+Previous/Next browse history, Now returns to current output, and Page appears
+only for long text. The compact title/model/status header stays live while browsing history. Main Deck
 contains account Limits and reset times. Finished sessions send short standalone
 notifications without acknowledging unread results. Images are delivered as
 original documents and remain downloadable through the session's Images view. Back/Deck are the final row.
@@ -30,3 +30,8 @@ sibling. Common deployment continues to select each image revision separately.
 
 Both projects use Vibecoding Kernel 1.3.5. Run make vibe-pull to refresh the local
 committed rules; make vibe-kernel-set configures the machine-local kernel path.
+
+Local message and media copies expire seven days after saving, checked every
+15 minutes. Pending/active work is retained until it resolves. The configured
+state directory owns bot.db, engine.db and uploads; native Codex history and
+Telegram cloud messages are outside this cleanup.

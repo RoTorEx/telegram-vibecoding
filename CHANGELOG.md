@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Simplify chat to title, model/status and agent output; use You/Codex/Updates and contextual Previous/Next/Now and Page controls. Clear stale format notices after accepted input.
+- Expire local transport message/media copies after seven days, preserving pending input, active files and durable read/deduplication cursors.
+
 ## [0.1.14] - 2026-10-24
 
 - Route registered image events through polling so originals reach Telegram automatically.

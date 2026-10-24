@@ -377,7 +377,7 @@ async def test_location_session_config_details_are_one_editable_panel(app):
     assert "No sessions here yet" in panel(transport).text
     await click(app, "➕ New")
     sid = runtime.store.get("selected")
-    assert "voice recording" in panel(transport).text
+    assert panel(transport).text == "<b>💬 New session</b>\nTest · Idle"
     assert not any(m == "turn/start" for m, p in native.calls)
     exits(transport)
     await click(app, "🧠 medium")
@@ -422,15 +422,15 @@ async def test_stream_delivery_history_and_navigation_preserve_one_panel(app, ho
         await settle(engine)
         session = engine.store.session(sid)
         await runtime.refresh_panel()
-        assert f"Original request {index}" in panel(transport).text
+        assert "Test ·" in panel(transport).text and "<blockquote>" not in panel(transport).text
         native.finish(session["thread_id"], text=f"Exact native answer {index}")
         for event in await runtime.engine.call("/events?after=" + runtime.store.get("event_cursor", "0")):
             runtime.queue_update(event)
         assert await runtime.deliver_pending()
         assert f"Exact native answer {index}" in panel(transport).text
-    await click(app, "◀ Earlier request")
+    await click(app, "◀ Previous")
     assert "Original request 0" in panel(transport).text and "Exact native answer 0" in panel(transport).text
-    await click(app, "Latest")
+    await click(app, "⏩ Now")
     assert "Exact native answer 1" in panel(transport).text
     assert runtime.store.get("panel_id") != first_id
     assert len(transport.messages) == 1
@@ -533,7 +533,8 @@ async def test_panel_state_survives_runtime_restart_and_native_questions_stay_in
         assert replacement.store.get("selected") == sid
         assert await replacement.refresh_panel()
         assert replacement.store.get("panel_id") == first_id
-        assert "Simple" in panel(transport).text
+        assert "Simple" not in panel(transport).text
+        assert engine.store.conversation(sid)["user"]["payload"]["text"] == "Simple"
     finally:
         replacement.store.close()
     assert len(transport.messages) == 1
@@ -633,8 +634,6 @@ async def test_long_answer_is_browsable_in_one_panel_without_dropping_text(app):
     answer = "Native answer 🚀\n" * 800
     engine.store.event(sid, "message", {"text": answer})
     await runtime.refresh_panel()
-    import re
-
     from test_markdown import CheckedHTML
 
     bodies = []
@@ -642,10 +641,7 @@ async def test_long_answer_is_browsable_in_one_panel_without_dropping_text(app):
         current = panel(transport)
         assert len(current.text.encode("utf-16-le")) // 2 <= 4096
         body = current.text.split("\n\n", 1)[1]
-        if "<b>🤖 Codex · Answer</b>" in body:
-            chunk = body.split("<b>🤖 Codex · Answer</b>", 1)[1]
-            chunk = re.sub(r"^ <i>\(\d+/\d+\)</i>", "", chunk).removeprefix("\n\n")
-            bodies.append(CheckedHTML(chunk).text)
+        bodies.append(CheckedHTML(body).text)
         labels = [b.text for row in current.reply_markup.inline_keyboard for b in row]
         if "◀ Page" not in labels:
             break
@@ -847,18 +843,18 @@ async def test_live_feedback_animates_public_summaries_without_tool_or_code_outp
     )
     monkeypatch.setattr(presentation.time, "time", lambda: 110)
     await runtime.refresh_panel()
-    await click(app, "💭 Progress")
+    await click(app, "💭 Updates")
     identity = runtime.store.get("panel_id")
     before = panel(transport).text
     labels = [button.text for row in panel(transport).reply_markup.inline_keyboard for button in row]
-    assert any("00:10 elapsed" in label for label in labels)
+    assert "00:10 elapsed" in before
     assert "🧠 medium" in labels and "Reasoning: medium" not in before
     assert "Checking behavior." in before and "Then verifying recovery." in before
     assert all(s not in before for s in ["SECRET_CODE", "SECRET_COMMAND", "LIVE_CODE", "TOOL_OUTPUT"])
     monkeypatch.setattr(presentation.time, "time", lambda: 112)
     await runtime.refresh_panel()
     labels = [button.text for row in panel(transport).reply_markup.inline_keyboard for button in row]
-    assert any("00:12 elapsed" in label for label in labels)
+    assert "00:12 elapsed" in panel(transport).text
     assert runtime.store.get("panel_id") == identity
     engine.on_event(
         "item/completed",
@@ -867,10 +863,10 @@ async def test_live_feedback_animates_public_summaries_without_tool_or_code_outp
     native.finish(thread, text="Final answer")
     await runtime.refresh_panel()
     assert "Checked behavior." in panel(transport).text
-    await click(app, "🤖 Answer")
+    await click(app, "🤖 Codex")
     completed = panel(transport).text
     assert "Final answer" in completed and "Checked behavior." not in completed
-    assert "Codex · Answer</b>" in completed
+    assert "Codex · Answer</b>" not in completed
     assert len(transport.messages) == 1
 
 
@@ -1036,11 +1032,7 @@ async def test_stop_is_usable_while_voice_is_transcribing(app):
     await runtime.process_messages([runtime.store.one("SELECT * FROM inbox WHERE id=3200")])
     await entered.wait()
     await runtime.refresh_panel()
-    assert any(
-        "Transcribing voice" in button.text
-        for row in panel(transport).reply_markup.inline_keyboard
-        for button in row
-    )
+    assert "Transcribing voice" in panel(transport).text
     await click(app, "⏸ Pause")
     assert engine.store.request("telegram:3200")["state"] == "cancelled"
     assert engine.store.session(sid)["status"] == "interrupted"
@@ -1063,9 +1055,12 @@ async def test_saved_agent_markdown_renders_in_the_actual_dialog_panel(app):
     assert rendered.link_preview_options.is_disabled
     assert "<b>Ready</b>" in rendered.text
     assert "• <code>core</code> — Agents &amp; state" in rendered.text
-    assert "&lt;b&gt;literal user input&lt;/b&gt;" in rendered.text
+    assert "literal user input" not in rendered.text
+    await click(app, "👤 You")
+    assert "&lt;b&gt;literal user input&lt;/b&gt;" in panel(transport).text
     assert "**" not in rendered.text and "|" not in rendered.text
     assert engine.store.history(sid)[-1]["payload"]["text"] == raw
+    await click(app, "🤖 Codex")
     await click(app, "ℹ️ Details")
     await click(app, "⬅️ Back")
     assert "<b>Ready</b>" in panel(transport).text
@@ -1176,16 +1171,16 @@ async def test_background_completion_does_not_mark_read_and_latest_acknowledges(
     first = engine.store.event(sid, "completed", {"status": "completed"})
     await runtime.refresh_panel()
     assert runtime.store.viewed(sid) == 0
-    await click(app, "Latest")
+    await click(app, "• 🤖 Codex")
     assert runtime.store.viewed(sid) == first
     engine.store.event(sid, "user", {"text": "More work"})
     engine.store.event(sid, "message", {"text": "New result"})
     second = engine.store.event(sid, "completed", {"status": "completed"})
     await runtime.refresh_panel()
     assert runtime.store.viewed(sid) == first < second
-    await click(app, "◀ Earlier request")
+    await click(app, "◀ Previous")
     assert runtime.store.viewed(sid) == first
-    await click(app, "Latest")
+    await click(app, "⏩ Now")
     assert runtime.store.viewed(sid) == second
     from telegram_vibecoding.store import BotStore
 
@@ -1252,7 +1247,7 @@ async def test_new_completion_during_publication_stays_unread(app):
         return result
 
     transport.make_request = completing
-    await click(app, "Latest")
+    await click(app, "• 🤖 Codex")
     assert later and runtime.store.viewed(sid) == first < later[0]
     await click(app, "🏠 Deck")
     assert "Unread: <b>1</b>" in panel(transport).text
@@ -1338,18 +1333,18 @@ async def test_exchange_and_text_pages_are_independent_and_pause_keeps_identity(
     rows = [[b.text for b in row] for row in panel(transport).reply_markup.inline_keyboard]
     assert rows[0] == ["ℹ️ Details", "⏸ Pause"]
     assert rows[1] == ["🤖 Test", "🧠 medium", "📝 Plan: Off"]
-    await click(app, "◀ Earlier request")
+    await click(app, "◀ Previous")
     view = json.loads(runtime.store.get("history_view"))
     anchor = view["anchor"]
-    assert "Request 1 of 2" in panel(transport).text
-    await click(app, "👤 Request")
+    assert "History · 1 of 2" in panel(transport).text
+    await click(app, "👤 You")
     assert "<b>👤 You</b>" in panel(transport).text and "<blockquote>" in panel(transport).text
     await click(app, "Page ▶")
     assert json.loads(runtime.store.get("history_view"))["anchor"] == anchor
-    assert "Request 1 of 2" in panel(transport).text
-    await click(app, "Later request ▶")
-    assert "Request 2 of 2" in panel(transport).text and "Second request" in panel(transport).text
-    await click(app, "Latest")
+    assert "History · 1 of 2" in panel(transport).text
+    await click(app, "Next ▶")
+    assert "Second request" in panel(transport).text
+    await click(app, "⏩ Now")
     assert html_length(panel(transport).text) < 4096
     await click(app, "⏸ Pause")
     assert engine.store.session(sid)["status"] == "interrupted"

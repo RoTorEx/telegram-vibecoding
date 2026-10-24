@@ -32,21 +32,27 @@ respectively. It lists drafts too, and opens an explicit Archive action stating
 that active work will stop. Archiving hides the session from active lists while
 retaining history and project files. There is no permanent-delete action. Locations are existing registered directories; do not expose
 a manual Other location input action in this menu. Model/reasoning/Plan controls belong to the open chat, never session lists or
-global Settings. Their values appear on the buttons rather than repeated in text.
+global Settings. The compact chat header repeats only the effective model and current activity/status; effort and Plan remain on their buttons.
 An already-open legacy Config view recovers into its chat without acknowledging
 unread results.
 
-A session uses one editable panel with Request, Answer and Progress tabs. Answer
-is the default and excludes public reasoning/commentary; Progress retains those
-summaries separately. Each response/progress page includes a brief original
-request quote and an explicit request index; the full input stays under Request.
-Earlier/Later request navigates exchanges; Page stays within the selected tab.
-Latest returns to the latest Answer. Only viewing its final page acknowledges a
-completion; Request/Progress never mark it read. The animated activity button
-shows the current native work and elapsed time even while older history is open.
-It opens Latest. Config has no navigation button. Direct model/effort/Plan
-controls apply to the next turn without interrupting work. Details and Pause
-lead the chat controls; Pause retains native identity/history.
+A session uses one editable panel: session title, a compact model/status line,
+then agent output. Keep original user input under You, final output under Codex
+(the default), and public commentary/reasoning under Updates. While no final
+answer exists, show the latest public commentary in the default output; the
+final answer replaces it. Do not repeat a
+request quote, role heading for a normal answer, empty-answer boilerplate or
+permanent input hints in the main output. Previous/Next browse history; Now
+returns to current output and appears only when away from it. Page controls
+appear only for multi-page content. A small history position appears while
+browsing older input. The animated activity and elapsed time stay in the header,
+including while older history is open, without an extra activity button.
+Only explicit viewing of the current answer's final page acknowledges completion;
+You/Updates never mark it read. Config has no navigation button. Direct
+model/effort/Plan controls apply to the next turn without interrupting work.
+Details and Pause lead the chat controls; Pause retains native identity/history.
+A successful accepted input clears the previous transient error, and process
+startup discards stale notices without changing durable inbox/retry state.
 
 Details uses separate bold identity/status, Location, Timeline and Storage blocks.
 It contains title, host, directory, location, creation/request/response/completion
@@ -68,7 +74,7 @@ The frontend owns bot.db: captured input, UI state, offsets and output refresh
 requests. Input targets are captured before downloads/navigation. Button navigation and streaming edit the current panel. A new owner message
 moves the panel below that input by sending the replacement first and retiring
 the previous bot panel. Telegram edits cannot change message order. Preserve
-all owner messages and stored conversation history. Track the latest input and
+owner messages in Telegram and the locally retained seven-day history. Track the latest input and
 unfinished retirement durably, including across upgrades. A failed replacement
 send preserves the old panel; failed cleanup never repeats the successful send.
 Startup refreshes the saved view and repairs a panel stranded above newer input. Native questions and free-text
@@ -138,7 +144,7 @@ an output format. Public progress keeps its existing code filtering.
 
 Pack rendered content into pages of at most 3200 visible UTF-16 units. Split
 individual role blocks at 3000 units to reserve space for repeated labels and
-part counters. Each page starts with a bold author/type: 👤 You, 🤖 Codex · Answer,
+part counters. Mixed/export views use bold author/type labels: 👤 You, 🤖 Codex · Answer,
 💬 Codex · Progress, 🧠 Codex · Reasoning, or a labeled question/system outcome.
 Quote the original user input; use a visible divider only between distinct
 blocks sharing a page. Reopen formatting on every page, including quotes/code.
@@ -218,3 +224,27 @@ exported automatically. Producers register chosen images through the Core API;
 the frontend does not import Core code. Image delivery has the same durable
 known-success retry behavior as completion notices and does not acknowledge an
 answer as read.
+
+## Seven-day local retention
+
+The owner requested bounded VPS storage: local message content, transcripts,
+received media and registered image originals expire 604800 seconds (seven
+24-hour days) after saving, independent of reads. Both processes check every
+900 seconds (15 minutes); cleanup also runs at bot startup. All bot-owned files
+live under the configured data_dir/uploads, with message records in bot.db and
+Core's engine.db in that same state root. Do not add permanent cleanup services.
+Core owns event/request content and registered attachment files; the bot owns
+its input/output copies and intake/orphan files. Migrate legacy output timestamps
+from Core events rather than restarting their seven-day clock. Missing expired
+anchors are safe and IDs/cursors never move backwards.
+
+Keep pending input and active/question-waiting session files until work resolves,
+then expire overdue content at the next check. Scrub completed inbox payloads,
+remove expired output/notices, compact SQLite and retain only small identity/read
+cursors needed to prevent duplicate execution and unread-state regressions.
+This is local bot storage retention: Telegram cloud messages, native Codex
+context/history, repositories, credentials, speech model cache and existing
+backup retention have their own owners. Do not delete them through this janitor.
+Tests protect the exact cutoff, reads not extending lifetime, pending/active
+work, legacy timestamps, outside paths/symlinks and original input preservation
+inside the retention window.

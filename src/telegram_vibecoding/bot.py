@@ -146,6 +146,7 @@ class BotRuntime:
         self.instance = instance_file.read_text().strip() if instance_file.exists() else uuid.uuid4().hex
         settings.prepare()
         self.store = BotStore(settings.data_dir / "bot.db")
+        self.store.set("notice", "")
         if not self.store.get("notifications_since"):
             self.store.set("notifications_since", str(time.time()))
         last_input = self.store.one(
@@ -409,6 +410,8 @@ class BotRuntime:
         answers = json.loads(self.store.get("answers:" + qid, "{}"))
         answers[key] = value
         self.store.set("answers:" + qid, json.dumps(answers))
+        if not self.store.get("answers_saved:" + qid):
+            self.store.set("answers_saved:" + qid, str(time.time()))
         questions = q["payload"].get("questions", [])
         remaining = [x for x in questions if x["id"] not in answers]
         if not remaining:
@@ -689,6 +692,7 @@ class BotRuntime:
                         payload["audio"] = audio
                     self.store.prepare_request([r["id"] for r in rows], rid, payload)
                 await self.engine.call("/messages", payload)
+                self.store.set("notice", "")
                 if self.store.get("selected") == sid:
                     self.store.set("history_anchor", "")
                     self.store.set("history_part", "-1")
@@ -741,11 +745,18 @@ class BotRuntime:
             event["kind"] in {"completed", "attachment"}
             and event.get("session_id")
             and event.get("created", time.time()) >= float(self.store.get("notifications_since"))
+            and event.get("created", time.time()) > time.time() - 7 * 86400
         ):
             with self.store.db:
                 self.store.db.execute(
-                    "INSERT OR IGNORE INTO notifications(event_id,session_id,kind,payload) VALUES(?,?,?,?)",
-                    (event["id"], event["session_id"], event["kind"], json.dumps(event["payload"])),
+                    "INSERT OR IGNORE INTO notifications(event_id,session_id,kind,payload,created) VALUES(?,?,?,?,?)",
+                    (
+                        event["id"],
+                        event["session_id"],
+                        event["kind"],
+                        json.dumps(event["payload"]),
+                        event.get("created", time.time()),
+                    ),
                 )
         if event["kind"] == "question":
             qid = event["payload"]["question_id"]
@@ -758,7 +769,7 @@ class BotRuntime:
             if event.get("session_id")
             else None
         )
-        self.store.queue_event(event["id"], [text or "Session updated."], markup)
+        self.store.queue_event(event["id"], [text or "Session updated."], markup, event.get("created"))
 
     async def events_loop(self):
         while not self.stop_event.is_set():
@@ -872,6 +883,84 @@ class BotRuntime:
                 log.warning("Panel update retained: %s", type(exc).__name__)
                 await asyncio.sleep(3)
             await asyncio.sleep(0.3)
+
+    async def expire_history(self, now: float | None = None) -> dict:
+        cutoff = (time.time() if now is None else now) - 7 * 86400
+        legacy = {
+            r["event_id"]
+            for r in self.store.rows(
+                "SELECT event_id FROM outbox WHERE created=0 UNION SELECT event_id FROM notifications WHERE created=0"
+            )
+        }
+        after = min(legacy) - 1 if legacy else 0
+        while legacy:
+            events = await self.engine.call(f"/events?after={after}")
+            if not events:
+                break
+            with self.store.db:
+                for event in events:
+                    if event["id"] in legacy:
+                        for table in ("outbox", "notifications"):
+                            self.store.db.execute(
+                                f"UPDATE {table} SET created=? WHERE event_id=? AND created=0",
+                                (event["created"], event["id"]),
+                            )
+                        legacy.discard(event["id"])
+            after = events[-1]["id"]
+        sessions = await self.engine.call("/sessions")
+        pending_questions: set[str] = set()
+        for session in sessions:
+            if session.get("pending_questions"):
+                pending_questions.update(
+                    q["id"] for q in await self.engine.call(f"/sessions/{session['id']}/questions")
+                )
+        for row in self.store.rows("SELECT key FROM meta WHERE key LIKE 'answers:%'"):
+            qid = row["key"].split(":", 1)[1]
+            if qid not in pending_questions and float(self.store.get("answers_saved:" + qid, "0")) <= cutoff:
+                with self.store.db:
+                    self.store.db.execute(
+                        "DELETE FROM meta WHERE key IN (?,?)", (row["key"], "answers_saved:" + qid)
+                    )
+        protected = {
+            s["id"]
+            for s in sessions
+            if s.get("turn_id")
+            or s.get("pending_requests")
+            or s.get("pending_questions")
+            or s["status"] in {"working", "waiting", "connecting", "transcribing"}
+        }
+        paths = set()
+        for row in self.store.rows("SELECT session_id,payload FROM inbox WHERE status='pending'"):
+            protected.add(row["session_id"])
+            payload = json.loads(row["payload"] or "{}")
+            paths.update(payload.get("images", []) + payload.get("audio", []))
+        result = self.store.expire_history(cutoff)
+        root = self.settings.data_dir / "uploads"
+        removed = 0
+        # Core owns registered originals; the frontend owns intake and orphaned downloads.
+        for path in root.rglob("*"):
+            relative = path.relative_to(root)
+            if (
+                path.is_symlink()
+                or not path.is_file()
+                or relative.parts[0] in protected
+                or "attachments" in relative.parts
+                or str(path) in paths
+                or not path.resolve().is_relative_to(root.resolve())
+            ):
+                continue
+            if path.stat().st_mtime <= cutoff:
+                path.unlink()
+                removed += 1
+        return {**result, "files": removed, "cutoff": cutoff}
+
+    async def retention_loop(self):
+        while not self.stop_event.is_set():
+            try:
+                log.info("Local retention: %s", await self.expire_history())
+            except Exception as exc:
+                log.warning("Local retention will retry: %s", type(exc).__name__)
+            await asyncio.sleep(900)
 
     async def preview_loop(self):
         while not self.stop_event.is_set():
@@ -1016,7 +1105,14 @@ class BotRuntime:
             loop.add_signal_handler(sig, self.stop_event.set)
         tasks = [
             asyncio.create_task(fn())
-            for fn in [self.poll, self.inbox_loop, self.events_loop, self.delivery_loop, self.preview_loop]
+            for fn in [
+                self.poll,
+                self.inbox_loop,
+                self.events_loop,
+                self.delivery_loop,
+                self.preview_loop,
+                self.retention_loop,
+            ]
         ]
         stopped = asyncio.create_task(self.stop_event.wait())
         try:

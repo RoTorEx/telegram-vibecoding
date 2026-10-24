@@ -22,6 +22,7 @@ class Database:
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA foreign_keys=ON")
         self.db.execute("PRAGMA synchronous=FULL")
+        self.db.execute("PRAGMA secure_delete=ON")
         path.chmod(0o600)
 
     def close(self) -> None:
@@ -61,6 +62,10 @@ class BotStore(Database):
                 part INTEGER NOT NULL, body TEXT NOT NULL, markup TEXT, status TEXT NOT NULL DEFAULT 'pending',
                 telegram_id INTEGER, UNIQUE(event_id,part));
         """)
+        for table in ("outbox", "notifications"):
+            if "created" not in {r[1] for r in self.db.execute(f"PRAGMA table_info({table})")}:
+                with self.db:
+                    self.db.execute(f"ALTER TABLE {table} ADD COLUMN created REAL NOT NULL DEFAULT 0")
 
     def get(self, key: str, default: str = "") -> str:
         row = self.one("SELECT value FROM meta WHERE key=?", (key,))
@@ -96,12 +101,20 @@ class BotStore(Database):
                 [(rid, json.dumps(payload), uid) for uid in update_ids],
             )
 
-    def queue_event(self, event_id: int, parts: list[str], markup: dict | None) -> None:
+    def queue_event(
+        self, event_id: int, parts: list[str], markup: dict | None, created: float | None = None
+    ) -> None:
         with self.db:
             for i, body in enumerate(parts):
                 self.db.execute(
-                    "INSERT OR IGNORE INTO outbox(event_id,part,body,markup) VALUES(?,?,?,?)",
-                    (event_id, i, body, json.dumps(markup) if markup and i == len(parts) - 1 else None),
+                    "INSERT OR IGNORE INTO outbox(event_id,part,body,markup,created) VALUES(?,?,?,?,?)",
+                    (
+                        event_id,
+                        i,
+                        body,
+                        json.dumps(markup) if markup and i == len(parts) - 1 else None,
+                        time.time() if created is None else created,
+                    ),
                 )
             self.db.execute(
                 "INSERT INTO meta VALUES('event_cursor',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -111,6 +124,20 @@ class BotStore(Database):
     def viewed(self, sid: str) -> int:
         row = self.one("SELECT completion_id FROM session_reads WHERE session_id=?", (sid,))
         return row["completion_id"] if row else 0
+
+    def expire_history(self, cutoff: float) -> dict:
+        with self.db:
+            inbox = self.db.execute(
+                "UPDATE inbox SET body='{}',payload=NULL,error=NULL WHERE "
+                "created<=? AND status='done' AND body!='{}'",
+                (cutoff,),
+            ).rowcount
+            outbox = self.db.execute("DELETE FROM outbox WHERE created<=?", (cutoff,)).rowcount
+            notices = self.db.execute("DELETE FROM notifications WHERE created<=?", (cutoff,)).rowcount
+        if inbox or outbox or notices:
+            self.db.execute("VACUUM")
+            self.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        return {"inbox": inbox, "outbox": outbox, "notifications": notices}
 
     def mark_viewed(self, sid: str, completion_id: int) -> None:
         with self.db:

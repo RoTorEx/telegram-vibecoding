@@ -117,13 +117,18 @@ def curated_models(models: list[dict]) -> list[dict]:
 
 
 def conversation_parts(
-    conversation: dict, live: dict | None = None, *, rich: bool = False, view: str = "all"
+    conversation: dict,
+    live: dict | None = None,
+    *,
+    rich: bool = False,
+    view: str = "all",
+    compact: bool = False,
 ) -> list[str]:
     literal = escape if rich else str
     formatted = render_markdown if rich else str
     user = conversation.get("user")
     if not user:
-        return ["Send text, an image or a voice recording to begin."]
+        return [""] if compact else ["Send text, an image or a voice recording to begin."]
     payload = user["payload"]
     prompt = payload.get("text", "")
     images = len(payload.get("images", []))
@@ -180,12 +185,23 @@ def conversation_parts(
             for key in sorted(parts, key=int):
                 append_progress(parts[key])
     if len(blocks) == 1:
-        blocks.append(("🤖 Codex", "Waiting for a response…"))
+        if not compact:
+            blocks.append(("🤖 Codex", "Waiting for a response…"))
     if view == "request":
         blocks = blocks[:1]
     elif view == "answer":
         blocks = [block for block in blocks[1:] if "Progress" not in block[0] and "Reasoning" not in block[0]]
         if not blocks:
+            if compact:
+                commentary = [
+                    e["payload"].get("text", "")
+                    for e in conversation["replies"]
+                    if e["kind"] == "message" and e["payload"].get("phase") == "commentary"
+                ]
+                if commentary:
+                    body = formatted(commentary[-1])
+                    return (split_html(body, 3000) if rich else split_text(body, 3000)) or [""]
+                return [""]
             blocks = [
                 (
                     "🤖 Codex · Answer",
@@ -195,6 +211,8 @@ def conversation_parts(
     elif view == "progress":
         blocks = [block for block in blocks[1:] if "Progress" in block[0] or "Reasoning" in block[0]]
         if not blocks:
+            if compact:
+                return [""]
             blocks = [("💬 Codex · Progress", "No public progress for this request.")]
     pages = []
     page = ""
@@ -206,7 +224,7 @@ def conversation_parts(
             heading = f"<b>{label}</b>" if rich else label
             if len(chunks) > 1:
                 heading += f" <i>({index}/{len(chunks)})</i>" if rich else f" ({index}/{len(chunks)})"
-            block = heading + "\n\n" + chunk
+            block = chunk if compact and label == "🤖 Codex · Answer" else heading + "\n\n" + chunk
             combined = page + divider + block if page else block
             if page and length(combined) > 3200:
                 pages.append(page)
