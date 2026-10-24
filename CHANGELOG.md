@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Fix incoming button/reply serialization of SDK link-preview defaults that could block all commands behind one update.
+- Recover expired callback acknowledgements and detect stalled polling in health checks.
+
 ## [0.1.9] - 2026-10-24
 
 - Add Main Deck unread-result counts and a paginated Journal with durable explicit-view acknowledgements.

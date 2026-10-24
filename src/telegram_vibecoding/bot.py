@@ -431,6 +431,14 @@ class BotRuntime:
                     Update.model_validate({k: v for k, v in body.items() if k != "_relay"}),
                     runtime=self,
                 )
+            except TelegramBadRequest as exc:
+                if (
+                    "query is too old" not in exc.message.lower()
+                    and "query id is invalid" not in exc.message.lower()
+                ):
+                    raise
+                self.store.set("notice", "This button expired. Choose an action again.")
+                await self.open_deck_panel()
             except (UnknownIntent, UnknownState):
                 await self.open_deck_panel()
             except (ValueError, IndexError, KeyError) as exc:
@@ -724,6 +732,15 @@ class BotRuntime:
                 log.warning("Panel preview deferred: %s", type(exc).__name__)
             await asyncio.sleep(1.5)
 
+    async def receive_update(self, update: Update) -> None:
+        # Telegram only supplied set fields. SDK defaults can contain non-JSON sentinels.
+        body = update.model_dump(mode="json", exclude_none=True, exclude_unset=True, by_alias=True)
+        if self.capture(body):
+            row = self.store.one("SELECT * FROM inbox WHERE id=?", (update.update_id,))
+            if row and (self.is_control(body) or row["mode"] == "input"):
+                await self.process_navigation(row)
+        self.store.set("poll_heartbeat", str(time.time()))
+
     async def poll(self):
         me = await self.bot.get_me()
         if (
@@ -766,13 +783,16 @@ class BotRuntime:
             log.info("Waiting for the owner to start the private chat")
         self.store.set("bot_pid", str(os.getpid()))
         self.store.set("bot_instance", self.instance)
+        self.store.set("poll_heartbeat", str(time.time()))
         log.info("Bot connected: @%s; owner=%s", me.username, self.settings.allowed_user_id)
         while not self.stop_event.is_set():
+            stage = "retry_controls"
             try:
                 # UI/input operations must finish before a newer selection can overtake them.
                 for pending_row in self.store.rows("SELECT * FROM inbox WHERE status='pending' ORDER BY id"):
                     if self.is_control(json.loads(pending_row["body"])) or pending_row["mode"] == "input":
                         await self.process_navigation(pending_row)
+                stage = "get_updates"
                 updates = await self.bot.get_updates(
                     offset=int(self.store.get("offset", "0")),
                     timeout=25,
@@ -780,11 +800,9 @@ class BotRuntime:
                     request_timeout=35,
                 )
                 for update in updates:
-                    body = update.model_dump(mode="json", exclude_none=True, by_alias=True)
-                    if self.capture(body):
-                        current_row = self.store.one("SELECT * FROM inbox WHERE id=?", (update.update_id,))
-                        if current_row and (self.is_control(body) or current_row["mode"] == "input"):
-                            await self.process_navigation(current_row)
+                    stage = f"update:{update.update_id}"
+                    await self.receive_update(update)
+                self.store.set("poll_heartbeat", str(time.time()))
             except TelegramConflictError:
                 raise RuntimeError(
                     "Another process is polling this dev bot. Stop that consumer before continuing."
@@ -795,7 +813,7 @@ class BotRuntime:
             except TelegramRetryAfter as exc:
                 await asyncio.sleep(exc.retry_after)
             except Exception as exc:
-                log.warning("Polling retained state: %s", type(exc).__name__)
+                log.warning("Polling retained state: %s (%s)", type(exc).__name__, stage)
                 await asyncio.sleep(3)
 
     async def process_navigation(self, row: dict):
