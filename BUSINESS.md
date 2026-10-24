@@ -8,21 +8,33 @@ chat may send input or use callbacks. No extra LLM or rewritten prompts.
 
 ## Interaction contract
 
-Main Deck and its navigation button use the 👽 emoji. Main Deck has a full-width Settings button first, then Location. Use Telegram's
-default button styling without a primary color accent.
+Main Deck and its navigation button use 🏠. Main Deck has Settings and Terminal
+side by side, followed by Location and Journal. Its text shows session counts,
+without a selected location or path. Terminal reports bot/Core versions, protocol,
+host, Core revision/health, native process, intake, queued inputs and session/
+question/unread counts. Settings routes session configuration to Config.
+Use Telegram's default button styling without a primary color accent.
 Every screen ends with Back on the left and Deck on the right in one row. Home is the default first
-location. Numbered 1–10 controls page through locations and directory-scoped
+location. Numbered 1–8 controls page through locations and directory-scoped
 sessions. Location choices show the bold project name and its plain path in parentheses on one line.
 Selecting a location does not start an agent. Untouched, idle New session drafts
 without native threads or captured input are hidden from session lists; the New
-session button remains available. Draft records and history are preserved. New session appears only
-within a location. Locations are existing registered directories; do not expose
+session button remains available. Draft records and history are preserved. The ➕ New action appears only within a location, beside ✏️ Edit.
+Edit is also available in Journal; its scope is the location or all projects,
+respectively. It lists drafts too, and opens an explicit Archive action stating
+that active work will stop. Archiving hides the session from active lists while
+retaining history and project files. There is no permanent-delete action. Locations are existing registered directories; do not expose
 a manual Other location input action in this menu. Config belongs to an open
 session and its nested views, never the location/session lists or global Settings.
 
 A session normally shows its title/status, original request and agent response
-in one editable panel. Previous/Next browse complete retained exchanges and
-long Unicode parts; Latest follows live output. Original Telegram messages
+in one editable panel. Exchange arrows select retained request/reply exchanges; Page arrows select
+text pages within that exchange and never cross to another exchange. Exchange
+navigation starts at page one. Latest selects the newest exchange's final page
+and follows live output. Config and Details form the first row, exchange arrows
+and an active-turn Pause button follow, then page arrows and Latest. Pause uses
+native Stop, preserving identity/history; new input starts another turn in the
+same session. It does not freeze/resume a process. Original Telegram messages
 are preserved. Config selects the latest available Sol and up to two latest
 Astra models, cycles supported reasoning in place and toggles native Plan mode.
 Settings apply to the next native turn without stopping active work.
@@ -89,11 +101,21 @@ above the finished answer. Hide command/tool output, diffs and code blocks from
 progress. Do not display raw reasoning. Final answers and original user prompts
 remain intact. Completed summaries stay browsable in the paginated history.
 
-Session lists show at most ten entries per page. When multiple pages exist,
-left/right arrows share one row and clamp at the first/last page. A completed
-answer shows its age as s, m, h or d; working/transcribing sessions show an
-hourglass and questions awaiting the owner show a question marker. Ages refresh
-while the list is open; metadata edits do not reset the response timestamp.
+Session lists show at most eight entries per page, with four numbered buttons
+per row (two full rows for eight sessions). This phone layout bounds menu length
+and keeps controls usable; locations use the same picker. Paired page arrows
+clamp at the first/last page. Every session list, including Journal and Edit,
+sorts by Core last_interaction descending with stable ID tie-breaking. Core
+owns interaction semantics; explicit viewing does not reorder sessions.
+
+Lists distinguish Connecting, Transcribing, Working/live activity, queued input,
+questions waiting for the owner, finished unread results waiting for the owner,
+Read/Idle, Failed, Interrupted and Uncertain. Unknown statuses remain visible.
+Pending questions take precedence over active-turn markers, including native
+user-input and MCP elicitation contracts. Result read state uses the durable
+completion cursor independently of execution state. Relative ages use italic
+parenthesized approximate notation, e.g. (~1h); elapsed active time follows the
+same notation. Absolute detail/restart timestamps retain their Warsaw zone.
 
 ## Agent Markdown display
 
@@ -104,18 +126,26 @@ raw HTML is literal text. Tables become readable rows for narrow phone screens,
 preserving headers and cell contents. Do not rewrite the agent prompt to enforce
 an output format. Public progress keeps its existing code filtering.
 
-Split rendered content at 3200 visible UTF-16 units, preserving Unicode and
-reopening formatting on every page. Escape session names, paths, errors, typed
+Pack rendered content into pages of at most 3200 visible UTF-16 units. Split
+individual role blocks at 3000 units to reserve space for repeated labels and
+part counters. Each page starts with a bold author/type: 👤 You, 🤖 Codex · Answer,
+💬 Codex · Progress, 🧠 Codex · Reasoning, or a labeled question/system outcome.
+Quote the original user input; use a visible divider only between distinct
+blocks sharing a page. Reopen formatting on every page, including quotes/code.
+Role labels and counters are display metadata; retain all original text and
+native events unchanged. Long user input and long replies are both browsable. Escape session names, paths, errors, typed
 prompts and transcripts. All menus retain their normal buttons; formatting never
 changes callbacks, session identity or original history. Disable link previews
 to keep the single panel compact. Older answers are formatted when reopened.
 
-## Unread-results journal and restart notices
+## Session journal, read state and restart notices
 
 Main Deck shows running/waiting counts and an always-visible Journal button with
 the number of non-closed sessions having a finished outcome not explicitly
-viewed by the owner. Journal lists up to ten results per page across locations,
-newest first. Busy sessions leave the finished-results list until they finish.
+viewed by the owner. Journal is the general session switcher across locations,
+including active, question-waiting, finished, read and unread sessions. Opening a
+result changes its read label but does not remove it from Journal. Busy sessions
+are excluded only from the unread finished-result count until they finish.
 Failures and interruptions can also require attention.
 
 An outcome becomes viewed only after an owner navigation opens its latest chat

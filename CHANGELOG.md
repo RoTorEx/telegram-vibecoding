@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Make Journal a full session switcher with execution, question, queue and durable read statuses; sort every session list by latest interaction.
+- Show eight sessions per page with two rows of four numbers; add New/Edit controls and explicit archival with retained history/files.
+- Restore the home emoji, remove selected-location details from Main Deck, and add Terminal beside Settings for service/version information.
+- Separate exchange navigation from text-page navigation, repeat author/type labels across long queries and replies, and quote user input.
+- Put Config/Details first and Pause beside exchange navigation; display approximate relative times in italic parentheses.
+
 ## [0.1.9] - 2026-10-24
 
 - Add Main Deck unread-result counts and a paginated Journal with durable explicit-view acknowledgements.

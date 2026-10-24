@@ -6,7 +6,7 @@ from datetime import datetime
 from html import escape
 from zoneinfo import ZoneInfo
 
-from telegram_vibecoding.markdown import render_markdown, split_html
+from telegram_vibecoding.markdown import html_length, render_markdown, split_html
 
 PART_UNITS = 3500
 
@@ -21,14 +21,40 @@ def relative_age(value: float | None, now: float | None = None) -> str:
     return f"{seconds}s"
 
 
-def session_label(session: dict) -> str:
-    if session["status"] == "waiting":
-        marker = "❔"
-    elif session.get("turn_id") or session["status"] in {"connecting", "working", "transcribing"}:
-        marker = "⏳"
+def session_label(session: dict, viewed: int = 0, *, rich: bool = False) -> str:
+    status = session["status"]
+    pending = session.get("pending_requests", 0)
+    completion = session.get("last_completed_event") or 0
+    if session.get("pending_questions") or status == "waiting":
+        marker = "❔ Question · Waiting for you"
+    elif status == "transcribing":
+        marker = "🎙 Transcribing"
+    elif status == "connecting":
+        marker = "⏳ Connecting"
+    elif session.get("turn_id") or status == "working":
+        marker = "⏳ " + (session.get("activity") or "Working")
+    elif pending:
+        marker = "⏳ Queued"
+    elif status == "idle":
+        if completion > viewed:
+            marker = "📩 Unread · Finished · Waiting for you"
+        elif completion:
+            marker = "✓ Read · Idle"
+        else:
+            marker = "💬 Idle"
     else:
-        marker = "💬 " + relative_age(session.get("last_response"))
-    return f"{session['name']} · {marker}"
+        marker = {"failed": "⚠️ Failed", "interrupted": "⏹ Interrupted", "uncertain": "⚠️ Uncertain"}.get(
+            status, status
+        )
+        if completion:
+            marker += " · " + ("Unread" if completion > viewed else "Read")
+    if pending:
+        marker += f" · Queued: {pending}"
+    age = session.get("last_interaction", session.get("last_response"))
+    suffix = f"(~{relative_age(age)})" if age is not None else ""
+    if rich:
+        return escape(f"{session['name']} · {marker}") + (f" <i>{suffix}</i>" if suffix else "")
+    return f"{session['name']} · {marker}" + (f" {suffix}" if suffix else "")
 
 
 def progress_prose(text: str) -> str:
@@ -54,7 +80,7 @@ def progress_prose(text: str) -> str:
     return "\n".join(lines).strip()
 
 
-def activity_label(live: dict, effort: str, now: float | None = None) -> str:
+def activity_label(live: dict, effort: str, now: float | None = None, *, rich: bool = False) -> str:
     clock = time.time() if now is None else now
     elapsed = max(0, int(clock - live.get("started", clock)))
     waiting = live.get("activity") == "Waiting for your answer"
@@ -64,7 +90,10 @@ def activity_label(live: dict, effort: str, now: float | None = None) -> str:
         if waiting
         else ("Transcribing voice" if live.get("activity") == "Transcribing" else "Working")
     )
-    return f"{icon} {label} · {elapsed // 60:02}:{elapsed % 60:02} elapsed · Reasoning: {effort}"
+    duration = f"(~{elapsed // 60:02}:{elapsed % 60:02} elapsed)"
+    if rich:
+        return f"{icon} {label} · <i>{duration}</i> · Reasoning: {escape(effort)}"
+    return f"{icon} {label} · {duration} · Reasoning: {effort}"
 
 
 def timestamp(value: float | None) -> str:
@@ -100,14 +129,13 @@ def conversation_parts(conversation: dict, live: dict | None = None, *, rich: bo
     transcripts = [e["payload"]["text"] for e in conversation["replies"] if e["kind"] == "transcription"]
     if payload.get("audio"):
         prompt += "\n[Voice]\n" + ("\n".join(transcripts) or "Transcribing…")
-    replies = []
-    progress = False
+    blocks = [("👤 You", "<blockquote>" + literal(prompt) + "</blockquote>" if rich else prompt)]
 
     def append_progress(text, label="Reasoning"):
-        nonlocal progress
         if prose := progress_prose(text):
-            replies.append("────────\n" + label + "\n" + formatted(prose))
-            progress = True
+            blocks.append(
+                (("🧠 Codex · " if label == "Reasoning" else "💬 Codex · ") + label, formatted(prose))
+            )
 
     for event in conversation["replies"]:
         p = event["payload"]
@@ -118,27 +146,54 @@ def conversation_parts(conversation: dict, live: dict | None = None, *, rich: bo
             if p.get("phase") == "commentary":
                 append_progress(p.get("text", ""), "Progress")
             else:
-                replies.append(("────────\nAnswer\n" if progress else "") + formatted(p.get("text", "")))
+                blocks.append(("🤖 Codex · Answer", formatted(p.get("text", ""))))
         elif event["kind"] == "error":
-            replies.append("⚠️ " + literal(p.get("text", "Unknown error")))
+            blocks.append(("⚠️ Core · Error", literal(p.get("text", "Unknown error"))))
         elif event["kind"] == "question":
             for question in p.get("questions", []):
-                lines = ["Question", question["question"]]
+                lines = [question["question"]]
                 lines += [
                     f"• {o['label']}: {o.get('description', '')}" for o in question.get("options") or []
                 ]
-                replies.append(literal("\n".join(lines)))
+                blocks.append(("❔ Codex · Question", literal("\n".join(lines))))
             if not p.get("questions"):
-                replies.append(literal(str(p.get("message") or p.get("url") or "MCP request")))
+                blocks.append(
+                    ("❔ Codex · Question", literal(str(p.get("message") or p.get("url") or "MCP request")))
+                )
         elif event["kind"] == "completed" and p.get("status") != "completed":
             error = p.get("error") or {}
-            replies.append(literal(p.get("text") or error.get("message") or p["status"].capitalize()))
+            blocks.append(
+                (
+                    "⚠️ Core · Status",
+                    literal(p.get("text") or error.get("message") or p["status"].capitalize()),
+                )
+            )
     if live:
         for parts in live.get("summaries", {}).values():
             for key in sorted(parts, key=int):
                 append_progress(parts[key])
-    body = "You\n" + literal(prompt) + "\n\nCodex\n" + ("\n\n".join(replies) or "Waiting for a response…")
-    return split_html(body, 3200) if rich else split_text(body, 3200)
+    if len(blocks) == 1:
+        blocks.append(("🤖 Codex", "Waiting for a response…"))
+    pages = []
+    page = ""
+    divider = "\n\n━━━━━━━━━━━━━━━━\n\n"
+    length = html_length if rich else lambda value: len(value.encode("utf-16-le")) // 2
+    for label, body in blocks:
+        chunks = (split_html(body, 3000) if rich else split_text(body, 3000)) or [""]
+        for index, chunk in enumerate(chunks, 1):
+            heading = f"<b>{label}</b>" if rich else label
+            if len(chunks) > 1:
+                heading += f" <i>({index}/{len(chunks)})</i>" if rich else f" ({index}/{len(chunks)})"
+            block = heading + "\n\n" + chunk
+            combined = page + divider + block if page else block
+            if page and length(combined) > 3200:
+                pages.append(page)
+                page = block
+            else:
+                page = combined
+    if page:
+        pages.append(page)
+    return pages
 
 
 def split_text(text: str, limit: int = PART_UNITS) -> list[str]:

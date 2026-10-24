@@ -85,3 +85,59 @@ def test_table_multiple_columns_lists_and_unfinished_stream_are_safe():
     assert "Model: Sol" in parsed.text and "State: Ready" in parsed.text
     assert "1. First" in parsed.text and "2. Second" in parsed.text
     assert "Quoted text" in parsed.text and "unfinished" in parsed.text
+
+
+def test_long_query_and_answer_keep_roles_content_and_balanced_pages():
+    import re
+
+    prompt = "Literal <b>& 🚀</b>\n" * 650
+    answer = "```python\n" + "print('<tag> & 🚀')\n" * 900 + "```"
+    conversation = {
+        "user": {"payload": {"text": prompt}},
+        "replies": [{"kind": "message", "payload": {"text": answer}}],
+    }
+    pages = conversation_parts(conversation, rich=True)
+    assert len(pages) > 8
+    bodies = []
+    for page in pages:
+        parsed = CheckedHTML(page)
+        assert html_length(page) <= 3200
+        assert page.startswith(("<b>👤 You</b>", "<b>🤖 Codex · Answer</b>"))
+        content = re.sub(r"(?:👤 You|🤖 Codex · Answer)(?: \(\d+/\d+\))?\n\n", "", parsed.text)
+        bodies.append(content.replace("\n\n━━━━━━━━━━━━━━━━\n\n", ""))
+    assert "".join(bodies) == prompt + CheckedHTML(render_markdown(answer)).text
+    assert any("<blockquote>" in page for page in pages)
+    assert any("<pre>" in page for page in pages)
+    assert conversation["user"]["payload"]["text"] == prompt
+    assert conversation["replies"][0]["payload"]["text"] == answer
+
+
+def test_session_statuses_keep_question_queue_read_and_failure_contracts_distinct():
+    from telegram_vibecoding.presentation import session_label
+
+    base = {
+        "name": "<b>Literal</b>",
+        "status": "idle",
+        "turn_id": None,
+        "last_interaction": 1,
+        "last_completed_event": 12,
+    }
+    cases = [
+        ({}, 0, "Unread · Finished · Waiting for you"),
+        ({}, 12, "Read · Idle"),
+        ({"status": "working", "turn_id": "turn"}, 0, "Working"),
+        ({"status": "working", "turn_id": "turn", "pending_questions": 1}, 0, "Question · Waiting for you"),
+        ({"status": "transcribing"}, 0, "Transcribing"),
+        ({"status": "connecting"}, 0, "Connecting"),
+        ({"pending_requests": 2}, 0, "Queued: 2"),
+        ({"status": "failed"}, 0, "Failed · Unread"),
+        ({"status": "interrupted"}, 12, "Interrupted · Read"),
+        ({"status": "uncertain"}, 0, "Uncertain"),
+        ({"status": "future_status"}, 0, "future_status"),
+    ]
+    for changes, viewed, expected in cases:
+        html = session_label({**base, **changes}, viewed, rich=True)
+        parsed = CheckedHTML(html)
+        assert expected in parsed.text
+        assert "&lt;b&gt;Literal&lt;/b&gt;" in html
+        assert "<i>(~" in html

@@ -31,6 +31,9 @@ class Screens(StatesGroup):
     config = State()
     details = State()
     settings = State()
+    terminal = State()
+    edit_sessions = State()
+    edit_session = State()
     input = State()
     models = State()
 
@@ -47,20 +50,22 @@ async def location(app) -> dict:
     return selected
 
 
-def numbered(app, screen, entries, describe) -> tuple[str, list, bool, bool]:
+def numbered(app, screen, entries, describe, *, size=8) -> tuple[str, list, bool, bool]:
     key = "page:" + screen.state
-    page = max(0, min(int(app.store.get(key, "0")), max(0, (len(entries) - 1) // 10)))
+    page = max(0, min(int(app.store.get(key, "0")), max(0, (len(entries) - 1) // size)))
     app.store.set(key, str(page))
-    visible = entries[page * 10 : page * 10 + 10]
+    visible = entries[page * size : page * size + size]
     text = "\n\n".join(f"{i}. {describe(p)}" for i, p in enumerate(visible, 1))
-    if len(entries) > 10:
-        text += f"\n\nPage {page + 1}/{(len(entries) + 9) // 10}"
+    if len(entries) > size:
+        text += f"\n\nPage {page + 1}/{(len(entries) + size - 1) // size}"
     rows = [(str(i), p["id"]) for i, p in enumerate(visible, 1)]
-    return text, rows, page > 0, (page + 1) * 10 < len(entries)
+    return text, rows, page > 0, (page + 1) * size < len(entries)
 
 
 def working(session: dict) -> bool:
-    return bool(session.get("turn_id")) or session["status"] in {
+    return bool(
+        session.get("turn_id") or session.get("pending_questions") or session.get("pending_requests")
+    ) or session["status"] in {
         "connecting",
         "working",
         "transcribing",
@@ -103,31 +108,80 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
         ),
         "history_previous": False,
         "history_next": False,
+        "exchange_previous": False,
+        "exchange_next": False,
         "question_rows": [],
         "mcp_question": False,
     }
     if screen == Screens.deck:
         sessions = await app.engine.call("/sessions")
-        active = sum(working(s) for s in sessions)
+        active = sum(
+            working(s) and not s.get("pending_questions") and s["status"] != "waiting" for s in sessions
+        )
         pending = len(unread(app, sessions))
         v["journal_label"] = f"📒 Journal ({pending})"
-        waiting = sum(s["status"] == "waiting" for s in sessions)
-        v["text"] = (
-            f"👽 Main Deck\n\nMachine: {app.settings.host_id}\nLocation: {place['name']}\n{place['path']}"
+        waiting = sum(bool(s.get("pending_questions")) or s["status"] == "waiting" for s in sessions)
+        v["text"] = f"🏠 Main Deck\n\nWorking: {active} · Questions: {waiting}\nUnread results: {pending}"
+    elif screen in {Screens.journal, Screens.sessions, Screens.edit_sessions}:
+        sessions = await app.engine.call("/sessions")
+        all_projects = screen == Screens.journal or (
+            screen == Screens.edit_sessions and app.store.get("edit_scope") == "all"
         )
-        v["text"] += f"\n\nWorking: {active} · Waiting: {waiting}\nUnread results: {pending}"
-    elif screen == Screens.journal:
-        sessions = unread(app, await app.engine.call("/sessions"))
+        if not all_projects:
+            sessions = [s for s in sessions if s["cwd"] == place["path"]]
+        visible = []
+        for candidate in sessions:
+            if (
+                screen != Screens.edit_sessions
+                and candidate["name"] == "New session"
+                and not candidate["thread_id"]
+                and not candidate["turn_id"]
+                and candidate["status"] == "idle"
+                and not candidate.get("pending_requests")
+            ):
+                conversation = await app.engine.call(f"/sessions/{candidate['id']}/conversation")
+                if not conversation["total"]:
+                    continue
+            visible.append(candidate)
+        sessions = sorted(
+            visible,
+            key=lambda s: (s.get("last_interaction", s["updated"]), s["id"]),
+            reverse=True,
+        )
+        live = await app.engine.call("/live")
         projects = {p["path"]: p["name"] for p in await app.engine.call("/projects")}
-        listing, v["rows"], v["previous_page"], v["next_page"] = numbered(
-            app,
-            screen,
-            sessions,
-            lambda s: session_label(s) + " · " + projects.get(s["cwd"], Path(s["cwd"]).name),
+
+        def describe(s):
+            label = session_label(
+                {**s, "activity": live.get(s["id"], {}).get("activity")},
+                app.store.viewed(s["id"]),
+                rich=True,
+            )
+            return label + (
+                " · " + escape(projects.get(s["cwd"], Path(s["cwd"]).name)) if all_projects else ""
+            )
+
+        listing, v["rows"], v["previous_page"], v["next_page"] = numbered(app, screen, sessions, describe)
+        if screen == Screens.journal:
+            v["text"] = f"📒 Journal\n\nUnread results: {len(unread(app, sessions))}\n\n" + (
+                listing or "No sessions yet."
+            )
+        elif screen == Screens.edit_sessions:
+            v["text"] = (
+                "✏️ Edit sessions\n\nChoose a session to archive. History and project files are retained.\n\n"
+                + (listing or "No sessions to edit.")
+            )
+        else:
+            v["text"] = f"📍 {escape(place['name'])}\n{escape(place['path'])}\n\nSessions\n\n" + (
+                listing or "No sessions here yet. Start one below."
+            )
+    elif screen == Screens.edit_session:
+        target = await app.engine.call(f"/sessions/{app.store.get('edit_target')}")
+        v["text"] = (
+            f"✏️ {target['name']}\n\nDirectory: {target['cwd']}\nStatus: {target['status']}\n\nArchive removes this session from active lists and retains its history and files."
         )
-        v["text"] = f"📒 Journal\n\nUnread results: {len(sessions)}\n\n" + (
-            listing or "No unread results. Opened results leave this journal."
-        )
+        if working(target):
+            v["text"] += "\nArchiving also stops its active work."
     elif screen == Screens.locations:
         projects = await app.engine.call("/projects")
         projects.sort(key=lambda p: (p["name"] != "Home", p["name"].lower()))
@@ -135,31 +189,6 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
             app, screen, projects, lambda p: f"<b>{escape(p['name'])}</b> ({escape(p['path'])})"
         )
         v["text"] = "📍 Location\n\nChoose where to work.\n\n" + listing
-    elif screen == Screens.sessions:
-        sessions = await app.engine.call("/sessions")
-        sessions = [s for s in sessions if s["cwd"] == place["path"]]
-        visible = []
-        for candidate in sessions:
-            if (
-                candidate["name"] == "New session"
-                and not candidate["thread_id"]
-                and not candidate["turn_id"]
-                and candidate["status"] == "idle"
-            ):
-                conversation = await app.engine.call(f"/sessions/{candidate['id']}/conversation")
-                if not conversation["total"]:
-                    continue
-            visible.append(candidate)
-        sessions = visible
-        listing, v["rows"], v["previous_page"], v["next_page"] = numbered(
-            app, screen, sessions, session_label
-        )
-        v["text"] = (
-            f"📍 {place['name']}\n{place['path']}\n\n"
-            + "Sessions"
-            + "\n\n"
-            + (listing or "No sessions here yet. Start one below.")
-        )
     elif screen == Screens.chat and session:
         cursor = app.store.get("history_anchor")
         conversation = await app.engine.call(
@@ -168,6 +197,21 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
         live = (await app.engine.call("/live")).get(sid) if not conversation["next"] else None
         if live and session["status"] == "waiting":
             live = {**live, "activity": "Waiting for your answer"}
+        questions = await app.engine.call(f"/sessions/{sid}/questions")
+        if questions and not conversation["next"]:
+            replies = list(conversation["replies"])
+            for question in questions:
+                if not any(
+                    e["kind"] == "question" and e["payload"].get("question_id") == question["id"]
+                    for e in replies
+                ):
+                    replies.append(
+                        {
+                            "kind": "question",
+                            "payload": {"question_id": question["id"], **question["payload"]},
+                        }
+                    )
+            conversation = {**conversation, "replies": replies}
         parts = conversation_parts(conversation, live, rich=True)
         part = int(app.store.get("history_part", "-1"))
         part = len(parts) - 1 if part < 0 else min(part, len(parts) - 1)
@@ -182,18 +226,19 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
                 }
             ),
         )
-        v["history_previous"] = part > 0 or conversation["previous"] is not None
-        v["history_next"] = part + 1 < len(parts) or conversation["next"] is not None
-        header = f"💬 {session['name'][:100]} · {session['status']}"
+        v["history_previous"] = part > 0
+        v["history_next"] = part + 1 < len(parts)
+        v["exchange_previous"] = conversation["previous"] is not None
+        v["exchange_next"] = conversation["next"] is not None
+        header = "<b>💬 " + escape(session["name"][:70]) + "</b>\nStatus: " + escape(session["status"])
         if live:
-            header += "\n" + activity_label(live, session["effort"])
+            header += "\n" + activity_label(live, session["effort"], rich=True)
         if conversation["total"]:
             header += f"\nExchange {conversation['index']}/{conversation['total']}"
         if len(parts) > 1:
-            header += f" · Part {part + 1}/{len(parts)}"
-        v["text"] = escape(header) + "\n\n" + parts[part]
-        questions = await app.engine.call(f"/sessions/{sid}/questions")
-        if questions and not conversation["next"]:
+            header += f" · Page {part + 1}/{len(parts)}"
+        v["text"] = header + "\n\n" + parts[part]
+        if questions and not conversation["next"] and part == len(parts) - 1:
             q = questions[0]
             app.store.set("question_session:" + q["id"], sid)
             if q["method"] == "item/tool/requestUserInput":
@@ -234,17 +279,23 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
             f"Disk free: {details['disk_free'] / 1024**3:.1f} / {details['disk_total'] / 1024**3:.1f} GiB"
         )
     elif screen == Screens.settings:
-        health = await app.engine.call("/health")
         v["text"] = (
-            f"⚙️ Settings\n\nMachine: {app.settings.host_id}\nDefault location: Home\nAgent: Codex"
-            f"\n\nTelegram: {__version__}\nCore: {health['version']}"
+            "⚙️ Settings\n\nAgent: Codex\nDefault location: Home\n\nOpen a session's Config for model, reasoning and Plan mode. Open Terminal for versions and service status."
         )
-        if session:
-            v["text"] += (
-                f"\n\nSelected session: {session['name']}\nModel, reasoning and Plan mode are in its Config."
-            )
-        else:
-            v["text"] += "\n\nChoose a location and open a session to configure Codex."
+    elif screen == Screens.terminal:
+        health = await app.engine.call("/health")
+        sessions = await app.engine.call("/sessions")
+        v["text"] = (
+            f"💻 Terminal\n\nMachine: {health['host_id']}\nTelegram: {__version__}\nCore: {health['version']}"
+            f"\nProtocol: {health.get('protocol_version', 1)}\nCore revision: {health.get('revision', 'Unknown')}"
+            f"\nCore: {'Healthy' if health.get('ok') else 'Unavailable'}"
+            f"\nNative agent: {'Running' if health.get('codex_running') else 'Stopped'}"
+            f"\nIntake: {'Accepting' if health.get('accepting') else 'Draining'}"
+            f"\nPending inputs: {health.get('pending_requests', 0)}"
+            f"\nSessions: {len(sessions)} · Active: {sum(working(s) for s in sessions)}"
+            f"\nQuestions: {sum(s.get('pending_questions', int(s['status'] == 'waiting')) for s in sessions)}"
+            f"\nUnread results: {len(unread(app, sessions))}"
+        )
     elif screen == Screens.input:
         v["text"] = app.store.get("input_prompt", "Send a value.")
     elif screen == Screens.models and session:
@@ -263,7 +314,9 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
         completion = max((e["id"] for e in conversation["replies"] if e["kind"] == "completed"), default=0)
         if completion:
             app.view_receipt = (sid, completion)
-    if screen != Screens.locations and (screen != Screens.chat or not session):
+    if screen not in {Screens.locations, Screens.sessions, Screens.journal, Screens.edit_sessions} and (
+        screen != Screens.chat or not session
+    ):
         v["text"] = escape(v["text"])
     v["has_pages"] = v["previous_page"] or v["next_page"]
     if notice := app.store.get("notice"):
@@ -322,6 +375,31 @@ async def locations(c, b, manager):
 
 async def journal(c, b, manager):
     await go(manager, Screens.journal)
+
+
+async def terminal(c, b, manager):
+    await go(manager, Screens.terminal)
+
+
+async def edit_sessions(c, b, manager):
+    app = runtime(manager)
+    app.store.set("edit_scope", "all" if manager.current_context().state == Screens.journal else "location")
+    app.store.set(f"page:{Screens.edit_sessions.state}", "0")
+    await go(manager, Screens.edit_sessions)
+
+
+async def choose_edit_session(c, widget, manager, item_id):
+    runtime(manager).store.set("edit_target", item_id)
+    await go(manager, Screens.edit_session)
+
+
+async def archive_session(c, b, manager):
+    app = runtime(manager)
+    target = app.store.get("edit_target")
+    await app.engine.call(f"/sessions/{target}/archive", {})
+    if app.store.get("selected") == target:
+        app.store.set("selected", "")
+    await back(c, b, manager)
 
 
 async def settings(c, b, manager):
@@ -389,19 +467,15 @@ async def history(c, b, manager):
     if b.widget_id == "latest":
         app.store.set("history_anchor", "")
         app.store.set("history_part", "-1")
-    elif b.widget_id == "history_prev":
-        app.store.set("history_anchor", str(view["anchor"]))
-        if view["part"] > 0:
-            app.store.set("history_part", str(view["part"] - 1))
-        elif view["previous"]:
-            app.store.set("history_anchor", str(view["previous"]))
-            app.store.set("history_part", "-1")
-    elif view["part"] + 1 < view["parts"]:
-        app.store.set("history_anchor", str(view["anchor"]))
-        app.store.set("history_part", str(view["part"] + 1))
-    elif view["next"]:
-        app.store.set("history_anchor", str(view["next"]))
-        app.store.set("history_part", "0")
+    elif b.widget_id in {"exchange_prev", "exchange_next"}:
+        target = view["previous"] if b.widget_id == "exchange_prev" else view["next"]
+        if target:
+            app.store.set("history_anchor", str(target))
+            app.store.set("history_part", "0")
+    else:
+        app.store.set("history_anchor", str(view["anchor"]) if view.get("anchor") else "")
+        direction = -1 if b.widget_id == "history_prev" else 1
+        app.store.set("history_part", str(max(0, min(view["part"] + direction, view["parts"] - 1))))
     manager.show_mode = ShowMode.EDIT
 
 
@@ -504,7 +578,7 @@ def navigation(*, with_config=True):
     buttons.append(
         Row(
             Button(Const("⬅️ Back"), id="back", on_click=back),
-            Button(Const("👽 Deck"), id="deck", on_click=deck),
+            Button(Const("🏠 Deck"), id="deck", on_click=deck),
         )
     )
     return Group(*buttons)
@@ -519,7 +593,7 @@ def numbered_picker(callback):
             item_id_getter=lambda x: x[1],
             on_click=callback,
         ),
-        width=5,
+        width=4,
     )
 
 
@@ -536,7 +610,10 @@ def make_dialog() -> Dialog:
         Window(
             Format("{text}"),
             LinkPreview(is_disabled=True),
-            Button(Const("⚙️ Settings"), id="settings", on_click=settings),
+            Row(
+                Button(Const("⚙️ Settings"), id="settings", on_click=settings),
+                Button(Const("💻 Terminal"), id="terminal", on_click=terminal),
+            ),
             Button(Const("📍 Location"), id="locations", on_click=locations),
             Button(Format("{journal_label}"), id="journal", on_click=journal),
             navigation(with_config=False),
@@ -546,6 +623,7 @@ def make_dialog() -> Dialog:
         Window(
             Format("{text}"),
             LinkPreview(is_disabled=True),
+            Button(Const("✏️ Edit"), id="edit", on_click=edit_sessions),
             numbered_picker(choose_session),
             list_pages(),
             navigation(with_config=False),
@@ -564,7 +642,10 @@ def make_dialog() -> Dialog:
         Window(
             Format("{text}"),
             LinkPreview(is_disabled=True),
-            Button(Const("➕ New session"), id="new", on_click=new_session),
+            Row(
+                Button(Const("➕ New"), id="new", on_click=new_session),
+                Button(Const("✏️ Edit"), id="edit", on_click=edit_sessions),
+            ),
             numbered_picker(choose_session),
             list_pages(),
             navigation(with_config=False),
@@ -575,9 +656,18 @@ def make_dialog() -> Dialog:
             Format("{text}"),
             LinkPreview(is_disabled=True),
             Row(
-                Button(Const("◀"), id="history_prev", on_click=history, when="history_previous"),
+                Button(Const("⚙️ Config"), id="config", on_click=config),
+                Button(Const("ℹ️ Details"), id="details", on_click=details),
+            ),
+            Row(
+                Button(Const("◀ Exchange"), id="exchange_prev", on_click=history, when="exchange_previous"),
+                Button(Const("Exchange ▶"), id="exchange_next", on_click=history, when="exchange_next"),
+                Button(Const("⏸ Pause"), id="stop", on_click=stop, when="can_stop"),
+            ),
+            Row(
+                Button(Const("◀ Page"), id="history_prev", on_click=history, when="history_previous"),
                 Button(Const("Latest"), id="latest", on_click=history),
-                Button(Const("▶"), id="history_next", on_click=history, when="history_next"),
+                Button(Const("Page ▶"), id="history_next", on_click=history, when="history_next"),
             ),
             Select(
                 Format("{item[0]}"),
@@ -591,11 +681,6 @@ def make_dialog() -> Dialog:
                 Button(Const("Decline"), id="decline", on_click=mcp),
                 when="mcp_question",
             ),
-            Row(
-                Button(Const("⚙️ Config"), id="config", on_click=config),
-                Button(Const("ℹ️ Details"), id="details", on_click=details),
-            ),
-            Button(Const("⏹ Stop"), id="stop", on_click=stop, when="can_stop"),
             navigation(with_config=False),
             state=Screens.chat,
             parse_mode="HTML",
@@ -619,6 +704,30 @@ def make_dialog() -> Dialog:
             ),
             navigation(),
             state=Screens.details,
+            parse_mode="HTML",
+        ),
+        Window(
+            Format("{text}"),
+            LinkPreview(is_disabled=True),
+            numbered_picker(choose_edit_session),
+            list_pages(),
+            navigation(with_config=False),
+            state=Screens.edit_sessions,
+            parse_mode="HTML",
+        ),
+        Window(
+            Format("{text}"),
+            LinkPreview(is_disabled=True),
+            Button(Const("🗃 Archive"), id="archive", on_click=archive_session),
+            navigation(with_config=False),
+            state=Screens.edit_session,
+            parse_mode="HTML",
+        ),
+        Window(
+            Format("{text}"),
+            LinkPreview(is_disabled=True),
+            navigation(with_config=False),
+            state=Screens.terminal,
             parse_mode="HTML",
         ),
         Window(
