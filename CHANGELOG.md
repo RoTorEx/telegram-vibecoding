@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-10-24
+
 - Fix incoming button/reply serialization of SDK link-preview defaults that could block all commands behind one update.
 - Recover expired callback acknowledgements and detect stalled polling in health checks.
 
