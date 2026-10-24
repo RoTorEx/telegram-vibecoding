@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-10-24
+
 - Hide untouched empty session drafts from location lists while preserving their records and history.
 - Use 👽 for Main Deck and Deck navigation, and show location names in bold with plain paths in parentheses on one line.
 
