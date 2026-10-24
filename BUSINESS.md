@@ -156,11 +156,21 @@ bot. Per-session completion cursors persist in bot.db, advance monotonically and
 acknowledge only the displayed event; a later completion stays unread. On first
 upgrade retained unacknowledged results are visible rather than silently read.
 
-Every process boot publishes a new panel carrying a short restarted notice with
-version and Warsaw time, then retires the prior bot panel. Preserve the selected
-session/view and all native work. One successful publication marks that boot's
-notice delivered; retries do not republish an already accepted notice. No owner
-messages are removed and restarting the interface does not mark results viewed.
+Every process boot sends the owner one standalone online notification with
+bot/Core versions, host and Warsaw time. Request Telegram notification delivery
+explicitly (disable_notification=False); the owner's chat/device settings still
+control sound and push delivery. Keep this message outside the replaceable UI
+panel, with no navigation buttons. Later input, streaming and panel cleanup must
+not edit or delete it. Persist the accepted message ID/text and boot cursor
+before refreshing the UI, so panel failures and retries do not resend a known
+successful notification. A failed send leaves the cursor pending. A new boot
+gets a new notification; no historical notification backfill is sent.
+
+Refresh the selected view after notification delivery and retain the single
+working panel, owner messages, explicit-view cursors and all native execution.
+Restarting the interface does not mark results viewed. Tests cover retained
+notifications after navigation, repeated startup, failed sends and panel failure
+after a successful notification.
 
 ## Telegram intake and liveness
 

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Send persistent owner startup notifications with bot/Core versions, host and Warsaw time, independently of the replaceable session panel.
+
 ## [0.1.11] - 2026-10-24
 
 - Make Journal a full session switcher with execution, question, queue and durable read statuses; sort every session list by latest interaction.

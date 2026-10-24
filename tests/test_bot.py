@@ -1205,8 +1205,18 @@ async def test_restart_notice_publishes_once_per_boot_preserving_selected_view(a
     latest = runtime.store.get("panel_id")
     assert latest != old
     assert runtime.store.get("selected") == sid
-    assert "Telegram Vibecoding restarted" in panel(transport).text
-    assert "Warsaw" in panel(transport).text
+    notice_id = int(runtime.store.get("restart_notice_id"))
+    notice = transport.messages[notice_id]
+    assert "Telegram Vibecoding is online" in notice.text
+    assert "Core:" in notice.text and "Warsaw" in notice.text
+    assert notice.reply_markup is None
+    send = next(
+        call for call in transport.calls if isinstance(call, SendMessage) and "is online" in call.text
+    )
+    assert send.disable_notification is False
+    await click(app, "🏠 Deck")
+    assert transport.messages[notice_id].text == notice.text
+    assert runtime.store.viewed(sid) == 0
     assert runtime.store.get("restart_sent") == runtime.instance
     count = sum(isinstance(call, SendMessage) for call in transport.calls)
     await runtime.startup_panel()
@@ -1215,7 +1225,7 @@ async def test_restart_notice_publishes_once_per_boot_preserving_selected_view(a
     runtime.instance = "new-boot"
     await runtime.startup_panel()
     assert runtime.store.get("panel_id") != latest
-    assert len(transport.messages) == 1
+    assert len(transport.messages) == 3
     assert not native.calls
 
 
@@ -1269,7 +1279,7 @@ async def test_failed_restart_send_preserves_panel_and_retries_same_boot(app):
     await runtime.startup_panel()
     assert runtime.store.get("panel_id") != old
     assert runtime.store.get("restart_sent") == runtime.instance
-    assert len(transport.messages) == 1
+    assert len(transport.messages) == 2
 
 
 async def test_deck_terminal_edit_archive_and_eight_button_rows(app, host):
@@ -1480,3 +1490,32 @@ async def test_expired_callback_acknowledgement_does_not_poison_control_queue(ap
     transport.make_request = original
     await runtime.receive_update(Update.model_validate(update(uid + 1, "/start")))
     assert "Main Deck" in panel(transport).text
+
+
+async def test_startup_panel_failure_does_not_resend_accepted_notification(app):
+    from aiogram.exceptions import TelegramNetworkError
+
+    runtime, transport, engine, native = app
+    await command(app, "/start")
+    old = runtime.store.get("panel_id")
+    original = transport.make_request
+
+    async def fail_panel(bot, method, timeout=None):
+        if isinstance(method, SendMessage) and "is online" not in method.text:
+            raise TelegramNetworkError(method=method, message="panel unavailable")
+        return await original(bot, method, timeout)
+
+    transport.make_request = fail_panel
+    with pytest.raises(TelegramNetworkError):
+        await runtime.startup_panel()
+    notice_id = int(runtime.store.get("restart_notice_id"))
+    assert runtime.store.get("restart_sent") == runtime.instance
+    assert runtime.store.get("restart_panel") != runtime.instance
+    assert runtime.store.get("panel_id") == old
+    transport.make_request = original
+    await runtime.startup_panel()
+    assert runtime.store.get("restart_panel") == runtime.instance
+    assert int(runtime.store.get("panel_id")) > notice_id
+    assert notice_id in transport.messages
+    assert sum(isinstance(call, SendMessage) and "is online" in call.text for call in transport.calls) == 1
+    assert len(transport.messages) == 2

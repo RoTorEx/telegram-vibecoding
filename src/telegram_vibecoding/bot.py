@@ -341,20 +341,36 @@ class BotRuntime:
         self.read_requested = False
         self.view_receipt = None
         if self.restart_pending:
-            self.store.set("restart_sent", self.instance)
+            self.store.set("restart_panel", self.instance)
             self.restart_pending = False
 
     async def startup_panel(self) -> None:
-        self.restart_pending = self.store.get("restart_sent") != self.instance
-        if self.restart_pending:
-            from telegram_vibecoding import __version__
-            from telegram_vibecoding.presentation import timestamp
+        async with self.ui_lock:
+            self.restart_pending = self.store.get("restart_panel") != self.instance
+            if self.store.get("restart_sent") != self.instance:
+                from telegram_vibecoding import __version__
+                from telegram_vibecoding.presentation import timestamp
 
-            self.store.set("notice", f"🔄 {BOT_NAME} restarted · {__version__}\n" + timestamp(time.time()))
-        if self.store.get("screen"):
-            await self.refresh_panel()
-        else:
-            await self.initialize_panel()
+                health = await self.engine.call("/health")
+                text = (
+                    f"🟢 {BOT_NAME} is online\n\n"
+                    f"Bot: {__version__}\nCore: {health['version']}\nHost: {health['host_id']}\n"
+                    f"Started: {timestamp(time.time())}"
+                )
+                async with self.send_lock:
+                    await self.throttle()
+                    sent = await self.bot.send_message(
+                        self.settings.allowed_user_id, text, parse_mode=None, disable_notification=False
+                    )
+                    # Acknowledge the standalone send before refreshing the replaceable panel.
+                    self.store.set("restart_notice_id", str(sent.message_id))
+                    self.store.set("restart_notice_text", text)
+                    self.store.set("restart_sent", self.instance)
+                    log.info("Startup notification accepted: message=%s", sent.message_id)
+            if self.store.get("screen"):
+                await self.render_panel()
+            else:
+                await self.open_deck_panel()
 
     async def question(self, qid: str) -> dict:
         # Persisted delivery metadata binds a button to its original session.
