@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.13] - 2026-10-24
+
 - Group session details and journal entries, move model/effort/Plan controls into chat, and separate Request, Answer and Progress views with an always-live activity button.
 - Show real account quota windows and Warsaw reset times in Main Deck and Limits.
 - Start a captured new session for voice/text/images sent from a location's session list; preserve creation/input identities across fast input and retries.
