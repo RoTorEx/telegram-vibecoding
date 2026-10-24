@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-10-24
+
 - Send persistent owner startup notifications with bot/Core versions, host and Warsaw time, independently of the replaceable session panel.
 
 ## [0.1.11] - 2026-10-24
