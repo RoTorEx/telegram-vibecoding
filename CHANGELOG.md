@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 - Route registered image events through polling so originals reach Telegram automatically.
+- Retry startup panel flood waits in the same process without repeating accepted readiness notices.
 
 ## [0.1.13] - 2026-10-24
 

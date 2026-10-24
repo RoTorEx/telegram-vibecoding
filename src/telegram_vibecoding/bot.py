@@ -379,6 +379,20 @@ class BotRuntime:
             else:
                 await self.open_deck_panel()
 
+    async def startup_ready(self) -> None:
+        while not self.stop_event.is_set():
+            try:
+                await self.startup_panel()
+                return
+            except TelegramForbiddenError:
+                log.info("Waiting for the owner to start the private chat")
+                return
+            except TelegramRetryAfter as exc:
+                await asyncio.sleep(exc.retry_after)
+            except TelegramNetworkError:
+                log.warning("Startup delivery unavailable; retrying in the same process")
+                await asyncio.sleep(3)
+
     async def question(self, qid: str) -> dict:
         # Persisted delivery metadata binds a button to its original session.
         sid = self.store.get("question_session:" + qid)
@@ -928,11 +942,7 @@ class BotRuntime:
             except TelegramBadRequest as exc:
                 if "chat not found" not in str(exc).lower():
                     raise
-        try:
-            await self.startup_panel()
-        except TelegramForbiddenError:
-            # A fresh bot cannot initiate a chat before its owner presses Start.
-            log.info("Waiting for the owner to start the private chat")
+        await self.startup_ready()
         self.store.set("bot_pid", str(os.getpid()))
         self.store.set("bot_instance", self.instance)
         self.store.set("poll_heartbeat", str(time.time()))

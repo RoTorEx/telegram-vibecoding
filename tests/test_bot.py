@@ -1524,6 +1524,28 @@ async def test_startup_panel_failure_does_not_resend_accepted_notification(app):
     assert len(transport.messages) == 2
 
 
+async def test_startup_flood_wait_retries_without_process_restart_or_duplicate_notice(app):
+    from aiogram.exceptions import TelegramRetryAfter
+
+    runtime, transport, engine, native = app
+    await command(app, "/start")
+    original = transport.make_request
+    failed = False
+
+    async def flood_panel(bot, method, timeout=None):
+        nonlocal failed
+        if isinstance(method, SendMessage) and "is online" not in method.text and not failed:
+            failed = True
+            raise TelegramRetryAfter(method=method, message="flood wait", retry_after=0)
+        return await original(bot, method, timeout)
+
+    transport.make_request = flood_panel
+    await runtime.startup_ready()
+    assert failed
+    assert runtime.store.get("restart_panel") == runtime.instance
+    assert sum(isinstance(call, SendMessage) and "is online" in call.text for call in transport.calls) == 1
+
+
 async def test_voice_from_session_list_creates_captured_location_session_once(app, tmp_path):
     runtime, transport, engine, native = app
     await command(app, "/start")
