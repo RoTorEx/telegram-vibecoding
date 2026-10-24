@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Hide untouched empty session drafts from location lists while preserving their records and history.
+- Use 👽 for Main Deck and Deck navigation, and show location names in bold with plain paths in parentheses on one line.
+
 ## [0.1.7] - 2026-10-24
 
 - Render agent Markdown as safe Telegram formatting with readable table rows and balanced formatting across history pages; keep original messages intact.

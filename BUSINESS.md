@@ -8,11 +8,14 @@ chat may send input or use callbacks. No extra LLM or rewritten prompts.
 
 ## Interaction contract
 
-Main Deck has a full-width Settings button first, then Location. Use Telegram's
+Main Deck and its navigation button use the 👽 emoji. Main Deck has a full-width Settings button first, then Location. Use Telegram's
 default button styling without a primary color accent.
 Every screen ends with Back on the left and Deck on the right in one row. Home is the default first
 location. Numbered 1–10 controls page through locations and directory-scoped
-sessions. Selecting a location does not start an agent. New session appears only
+sessions. Location choices show the bold project name and its plain path in parentheses on one line.
+Selecting a location does not start an agent. Untouched, idle New session drafts
+without native threads or captured input are hidden from session lists; the New
+session button remains available. Draft records and history are preserved. New session appears only
 within a location. Locations are existing registered directories; do not expose
 a manual Other location input action in this menu. Config belongs to an open
 session and its nested views, never the location/session lists or global Settings.

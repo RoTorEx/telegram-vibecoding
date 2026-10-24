@@ -293,7 +293,7 @@ class BotRuntime:
                 [InlineKeyboardButton(text="💬 Open session", callback_data="open:" + sid)],
                 [
                     InlineKeyboardButton(text="⬅️ Back", callback_data="back"),
-                    InlineKeyboardButton(text="🏠 Deck", callback_data="deck"),
+                    InlineKeyboardButton(text="👽 Deck", callback_data="deck"),
                 ],
             ]
         )
@@ -308,7 +308,7 @@ class BotRuntime:
                 inline_keyboard=[
                     [
                         InlineKeyboardButton(text="⬅️ Back", callback_data="back"),
-                        InlineKeyboardButton(text="🏠 Deck", callback_data="deck"),
+                        InlineKeyboardButton(text="👽 Deck", callback_data="deck"),
                     ]
                 ]
             )

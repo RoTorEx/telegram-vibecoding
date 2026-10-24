@@ -183,7 +183,7 @@ async def test_real_dialog_deck_and_navigation_do_not_start_native_work(app):
     assert [b.text for b in markup.inline_keyboard[0]] == ["⚙️ Settings"]
     assert "📍 Location" in texts
     assert "💬 Sessions" not in texts and "➕ New session" not in texts
-    assert [b.text for b in markup.inline_keyboard[-1]] == ["⬅️ Back", "🏠 Deck"]
+    assert [b.text for b in markup.inline_keyboard[-1]] == ["⬅️ Back", "👽 Deck"]
     assert runtime.store.get("mode") == "menu"
     assert not native.calls
 
@@ -360,7 +360,7 @@ async def resume_legacy_location_input(app):
 
 
 def exits(transport):
-    assert [b.text for b in panel(transport).reply_markup.inline_keyboard[-1]] == ["⬅️ Back", "🏠 Deck"]
+    assert [b.text for b in panel(transport).reply_markup.inline_keyboard[-1]] == ["⬅️ Back", "👽 Deck"]
 
 
 async def test_location_session_config_details_are_one_editable_panel(app):
@@ -371,7 +371,7 @@ async def test_location_session_config_details_are_one_editable_panel(app):
     exits(transport)
     await click(app, "⬅️ Back")
     await click(app, "📍 Location")
-    assert "1. Home" in panel(transport).text
+    assert "1. <b>Home</b>" in panel(transport).text
     exits(transport)
     await click(app, "1")
     assert "No sessions here yet" in panel(transport).text
@@ -406,7 +406,7 @@ async def test_location_session_config_details_are_one_editable_panel(app):
     assert "Details" in panel(transport).text
     await click(app, "⬅️ Back")
     assert "A clear session title" in panel(transport).text
-    await click(app, "🏠 Deck")
+    await click(app, "👽 Deck")
     await click(app, "⬅️ Back")
     assert "Main Deck" in panel(transport).text
     assert runtime.store.get("panel_id") != first_id
@@ -443,7 +443,7 @@ async def test_stream_delivery_history_and_navigation_preserve_one_panel(app, ho
     runtime.capture(update(2010, "Run"))
     await runtime.process_messages([runtime.store.one("SELECT * FROM inbox WHERE id=2010")])
     await settle(engine)
-    await click(app, "🏠 Deck")
+    await click(app, "👽 Deck")
     native.finish(engine.store.session(sid)["thread_id"], text="Background result")
     for event in await runtime.engine.call("/events?after=" + runtime.store.get("event_cursor", "0")):
         runtime.queue_update(event)
@@ -462,7 +462,7 @@ async def test_numbered_location_pages_filter_sessions_and_keep_home_first(app, 
         engine.store.create_session(str(folder), f"Work {i:02d}", "medium")
     await command(app, "/start")
     await click(app, "📍 Location")
-    assert "1. Home" in panel(transport).text and "Page 1/2" in panel(transport).text
+    assert "1. <b>Home</b>" in panel(transport).text and "Page 1/2" in panel(transport).text
     await click(app, "▶")
     assert "Page 2/2" in panel(transport).text
     await click(app, "1")
@@ -870,7 +870,7 @@ async def test_top_level_menus_do_not_expose_configuration_from_a_remembered_ses
     await click(app, "⚙️ Settings")
     assert "⚙️ Config" not in [b.text for row in panel(transport).reply_markup.inline_keyboard for b in row]
     exits(transport)
-    await click(app, "🏠 Deck")
+    await click(app, "👽 Deck")
     await click(app, "📍 Location")
     labels = [b.text for row in panel(transport).reply_markup.inline_keyboard for b in row]
     assert not {"⚙️ Config", "📂 Other location", "🗃 Archived"}.intersection(labels)
@@ -1051,3 +1051,68 @@ async def test_saved_agent_markdown_renders_in_the_actual_dialog_panel(app):
     await click(app, "ℹ️ Details")
     await click(app, "⬅️ Back")
     assert "<b>Ready</b>" in panel(transport).text
+
+
+async def test_empty_draft_is_hidden_but_input_and_named_sessions_remain(app, tmp_path):
+    runtime, transport, engine, native = app
+    home = (await runtime.engine.call("/projects"))[0]
+    draft = engine.store.create_session(home["path"], "New session", "medium")
+    await command(app, "/start")
+    await click(app, "📍 Location")
+    assert f"<b>Home</b> ({home['path']})" in panel(transport).text
+    await click(app, "1")
+    assert "No sessions here yet" in panel(transport).text
+    labels = [b.text for row in panel(transport).reply_markup.inline_keyboard for b in row]
+    assert labels == ["➕ New session", "⬅️ Back", "👽 Deck"]
+    assert engine.store.session(draft["id"])["archived"] == 0
+    assert not native.calls
+    engine.store.event(draft["id"], "user", {"text": "Captured input"})
+    await runtime.refresh_panel()
+    assert "1. New session" in panel(transport).text
+    engine.store.update_session(draft["id"], name="Named draft")
+    await runtime.refresh_panel()
+    assert "1. Named draft" in panel(transport).text
+
+
+async def test_followups_steer_active_turn_and_project_navigation_keeps_targets(app, tmp_path):
+    runtime, transport, engine, native = app
+    other = tmp_path / "project-b"
+    other.mkdir()
+    engine.store.register_project("Project B", str(other))
+    await command(app, "/start")
+    await click(app, "📍 Location")
+    await click(app, "1")
+    await click(app, "➕ New session")
+    first = runtime.store.get("selected")
+    await command(app, "Start project A")
+    await settle(engine)
+    before = engine.store.session(first)
+    for text in ["Add this detail", "Also check this"]:
+        await command(app, text)
+        await settle(engine)
+    after = engine.store.session(first)
+    assert (after["thread_id"], after["turn_id"]) == (before["thread_id"], before["turn_id"])
+    steers = [p for method, p in native.calls if method == "turn/steer"]
+    assert [p["input"][0]["text"] for p in steers] == ["Add this detail", "Also check this"]
+    assert all(p["expectedTurnId"] == before["turn_id"] for p in steers)
+    await click(app, "👽 Deck")
+    await click(app, "📍 Location")
+    await click(app, "2")
+    await click(app, "➕ New session")
+    second = runtime.store.get("selected")
+    await command(app, "Start project B")
+    await settle(engine)
+    session_b = engine.store.session(second)
+    assert session_b["cwd"] == str(other)
+    assert session_b["thread_id"] != before["thread_id"]
+    assert engine.store.session(first)["turn_id"] == before["turn_id"]
+    await click(app, "👽 Deck")
+    await click(app, "📍 Location")
+    await click(app, "1")
+    await click(app, "1")
+    assert runtime.store.get("selected") == first
+    await command(app, "Back to A")
+    await settle(engine)
+    assert [p for method, p in native.calls if method == "turn/steer"][-1]["threadId"] == before["thread_id"]
+    assert not any(method == "turn/interrupt" for method, _ in native.calls)
+    assert len([1 for method, _ in native.calls if method == "turn/start"]) == 2

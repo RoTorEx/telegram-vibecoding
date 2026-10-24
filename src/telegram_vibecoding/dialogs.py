@@ -88,7 +88,7 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
         working = sum(bool(s["turn_id"]) for s in sessions)
         waiting = sum(s["status"] == "waiting" for s in sessions)
         v["text"] = (
-            f"🏠 Main Deck\n\nMachine: {app.settings.host_id}\nLocation: {place['name']}\n{place['path']}"
+            f"👽 Main Deck\n\nMachine: {app.settings.host_id}\nLocation: {place['name']}\n{place['path']}"
         )
         if working or waiting:
             v["text"] += f"\n\nWorking: {working} · Waiting: {waiting}"
@@ -96,12 +96,25 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
         projects = await app.engine.call("/projects")
         projects.sort(key=lambda p: (p["name"] != "Home", p["name"].lower()))
         listing, v["rows"], v["previous_page"], v["next_page"] = numbered(
-            app, screen, projects, lambda p: f"{p['name']}\n{p['path']}"
+            app, screen, projects, lambda p: f"<b>{escape(p['name'])}</b> ({escape(p['path'])})"
         )
         v["text"] = "📍 Location\n\nChoose where to work.\n\n" + listing
     elif screen == Screens.sessions:
         sessions = await app.engine.call("/sessions")
         sessions = [s for s in sessions if s["cwd"] == place["path"]]
+        visible = []
+        for candidate in sessions:
+            if (
+                candidate["name"] == "New session"
+                and not candidate["thread_id"]
+                and not candidate["turn_id"]
+                and candidate["status"] == "idle"
+            ):
+                conversation = await app.engine.call(f"/sessions/{candidate['id']}/conversation")
+                if not conversation["total"]:
+                    continue
+            visible.append(candidate)
+        sessions = visible
         listing, v["rows"], v["previous_page"], v["next_page"] = numbered(
             app, screen, sessions, session_label
         )
@@ -203,7 +216,7 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
         app.store.set("model_catalog", json.dumps(models))
         v["rows"] = [(m.get("displayName") or m["id"], m["id"]) for m in models]
         v["text"] = f"🧠 Model · {session['name']}\n\nLatest available Sol and up to two latest Astra models."
-    if screen != Screens.chat or not session:
+    if screen != Screens.locations and (screen != Screens.chat or not session):
         v["text"] = escape(v["text"])
     v["has_pages"] = v["previous_page"] or v["next_page"]
     if notice := app.store.get("notice"):
@@ -437,7 +450,7 @@ def navigation(*, with_config=True):
     buttons.append(
         Row(
             Button(Const("⬅️ Back"), id="back", on_click=back),
-            Button(Const("🏠 Deck"), id="deck", on_click=deck),
+            Button(Const("👽 Deck"), id="deck", on_click=deck),
         )
     )
     return Group(*buttons)
