@@ -7,7 +7,7 @@ directory, then a session. Sending text, images or voice from the location's
 session list starts a new session there. Session controls have three rows:
 Config/Details, Chat history/Stop, and Back/Deck. Config contains model, reasoning
 and Plan settings. History reads ordered pages continuously and offers separate
-chapter jumps between execution iterations. Each chapter starts at the initial
+iteration jumps between execution iterations. Each iteration starts at the initial
 user request and includes steering additions, progress, published reasoning,
 questions and answers through completion. Consecutive roles share pages when
 they fit, so the conversation reads from top to bottom. Image pages show attached media

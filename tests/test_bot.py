@@ -450,7 +450,7 @@ async def test_location_session_config_details_are_one_editable_panel(app):
     assert "No sessions here yet" in panel(transport).text
     await click(app, "➕ New")
     sid = runtime.store.get("selected")
-    assert panel(transport).text == "<b>💬 New session</b>\nTest · Idle"
+    assert panel(transport).text == "<b>💬 New session</b>\nTest (medium) · Idle"
     assert not any(m == "turn/start" for m, p in native.calls)
     exits(transport)
     await click(app, "⚙️ Config")
@@ -498,7 +498,7 @@ async def test_stream_delivery_history_and_navigation_preserve_one_panel(app, ho
         await settle(engine)
         session = engine.store.session(sid)
         await runtime.refresh_panel()
-        assert "Test ·" in panel(transport).text and "<blockquote>" not in panel(transport).text
+        assert "Test (medium) ·" in panel(transport).text and "<blockquote>" not in panel(transport).text
         native.finish(session["thread_id"], text=f"Exact native answer {index}")
         for event in await runtime.engine.call("/events?after=" + runtime.store.get("event_cursor", "0")):
             runtime.queue_update(event)
@@ -506,9 +506,9 @@ async def test_stream_delivery_history_and_navigation_preserve_one_panel(app, ho
         assert f"Exact native answer {index}" in panel(transport).text
     await click(app, "📖 Chat history")
     assert "Original request 1" in panel(transport).text and "Exact native answer 1" in panel(transport).text
-    await click(app, "⏮ Chapter")
+    await click(app, "⏮ Iteration")
     assert "Original request 0" in panel(transport).text and "Exact native answer 0" in panel(transport).text
-    await click(app, "Chapter ⏭")
+    await click(app, "Iteration ⏭")
     assert "Original request 1" in panel(transport).text
     assert "Exact native answer 1" in panel(transport).text
     assert runtime.store.get("panel_id") != first_id
@@ -1262,9 +1262,9 @@ async def test_background_completion_does_not_mark_read_and_latest_acknowledges(
     await runtime.refresh_panel()
     assert runtime.store.viewed(sid) == first < second
     await click(app, "📖 Chat history")
-    await click(app, "⏮ Chapter")
+    await click(app, "⏮ Iteration")
     assert runtime.store.viewed(sid) == first
-    await click(app, "Chapter ⏭")
+    await click(app, "Iteration ⏭")
     assert runtime.store.viewed(sid) == first
     while "Page ▶" in [b.text for row in panel(transport).reply_markup.inline_keyboard for b in row]:
         await click(app, "Page ▶")
@@ -1420,15 +1420,15 @@ async def test_exchange_and_text_pages_are_independent_and_pause_keeps_identity(
     rows = [[b.text for b in row] for row in panel(transport).reply_markup.inline_keyboard]
     assert rows == [["⚙️ Config", "ℹ️ Details"], ["📖 Chat history", "⏹ Stop"], ["⬅️ Back", "🏠 Deck"]]
     await click(app, "📖 Chat history")
-    await click(app, "⏮ Chapter")
+    await click(app, "⏮ Iteration")
     view = json.loads(runtime.store.get("history_view"))
     anchor = view["anchor"]
-    assert view["part"] == 0 and "Chapter 1/2" in panel(transport).text
+    assert view["part"] == 0 and "Iteration 1/2" in panel(transport).text
     assert "<b>👤 You</b>" in panel(transport).text and "<blockquote>" in panel(transport).text
     await click(app, "Page ▶")
     assert json.loads(runtime.store.get("history_view"))["anchor"] == anchor
-    assert "Chapter 1/2" in panel(transport).text
-    await click(app, "Chapter ⏭")
+    assert "Iteration 1/2" in panel(transport).text
+    await click(app, "Iteration ⏭")
     assert "Second request" in panel(transport).text
     assert json.loads(runtime.store.get("history_view"))["part"] == 0
     await click(app, "⬅️ Back")

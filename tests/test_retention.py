@@ -108,7 +108,7 @@ async def test_valid_input_clears_old_format_error_and_compact_chat_has_no_repea
     assert runtime.store.get("notice") == ""
     text = panel(transport).text
     assert text.count("Unique task text") == 1  # Only the session title.
-    assert "Test ·" in text and "Working" in text
+    assert "Test (medium) ·" in text and "Working" in text
     assert "Waiting for a response" not in text and "Send text" not in text
     engine.store.event(
         runtime.store.get("selected"), "message", {"text": "Working on the task", "phase": "commentary"}

@@ -313,11 +313,18 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
             if current_live
             else escape(session["status"].title())
         )
-        header += "\n" + escape(model.get("displayName") or model["id"]) + " · " + state
+        header += (
+            "\n"
+            + escape(model.get("displayName") or model["id"])
+            + " ("
+            + escape(session["effort"])
+            + ") · "
+            + state
+        )
         if screen == Screens.chat and len(parts) > 1:
             header += f"\n<i>Answer · Page 1/{len(parts)}</i>"
         if screen == Screens.history:
-            header += f"\n<i>Chapter {conversation['index']}/{conversation['total']} · Page {part + 1}/{len(parts)}</i>"
+            header += f"\n<i>Iteration {conversation['index']}/{conversation['total']} · Page {part + 1}/{len(parts)}</i>"
             source = book[part]["path"]
             v["media"] = (
                 MediaAttachment(
@@ -398,7 +405,7 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
             v["text"] += "\n\n<i>Updated: " + escape(timestamp(limits_data["checked_at"])) + "</i>"
     elif screen == Screens.settings:
         v["text"] = (
-            "<b>⚙️ Settings</b>\n\n<b>🤖 Session controls</b>\nModel, reasoning and Plan mode are on the chat buttons.\n\n<b>💻 Service information</b>\nOpen Terminal for versions and health, or Limits for account usage."
+            "<b>⚙️ Settings</b>\n\n<b>🤖 Session controls</b>\nOpen session Config for model, reasoning and Plan mode.\n\n<b>💻 Service information</b>\nOpen Terminal for versions and health, or Limits for account usage."
         )
     elif screen == Screens.terminal:
         health = await app.engine.call("/health")
@@ -863,8 +870,8 @@ def make_dialog() -> Dialog:
                 Button(Const("Page ▶"), id="history_next", on_click=history, when="history_next"),
             ),
             Row(
-                Button(Const("⏮ Chapter"), id="exchange_prev", on_click=history, when="exchange_previous"),
-                Button(Const("Chapter ⏭"), id="exchange_next", on_click=history, when="exchange_next"),
+                Button(Const("⏮ Iteration"), id="exchange_prev", on_click=history, when="exchange_previous"),
+                Button(Const("Iteration ⏭"), id="exchange_next", on_click=history, when="exchange_next"),
             ),
             navigation(with_config=False),
             state=Screens.history,
@@ -966,14 +973,14 @@ def make_dialog() -> Dialog:
     )
 
 
-async def open_screen(manager: DialogManager, screen: State) -> None:
+async def open_screen(manager: DialogManager, screen: State, *, read: bool = True) -> None:
     app = runtime(manager)
     app.store.set("notice", "")
     app.store.set("mode", "chat" if screen in {Screens.chat, Screens.history} else "menu")
     app.store.set("screen", screen.state)
     if screen == Screens.sessions:
         app.store.set("starting_session_key", "")
-    app.read_requested = screen in {Screens.chat, Screens.history}
+    app.read_requested = read and screen in {Screens.chat, Screens.history}
     app.store.set("input_action", "")
     app.store.set(
         "trail",

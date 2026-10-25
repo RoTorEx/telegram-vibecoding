@@ -169,7 +169,7 @@ def chapter_pages(
             )
         elif kind == "reasoning_summary":
             for part in p.get("parts") or [p.get("text", "")]:
-                text("🧠 Codex · Reasoning", render_markdown(part), eid)
+                text("🧠 Codex · Reasoning", "<blockquote>" + render_markdown(part) + "</blockquote>", eid)
         elif kind == "transcription" and p.get("request_id") not in user_requests:
             text("👤 You · Transcript", escape(p["text"]), eid)
         elif kind == "attachment" and p["attachment_id"] in remaining:

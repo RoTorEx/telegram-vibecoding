@@ -702,12 +702,20 @@ class BotRuntime:
                         payload["audio"] = audio
                     self.store.prepare_request([r["id"] for r in rows], rid, payload)
                 await self.engine.call("/messages", payload)
-                self.store.set("notice", "")
+            self.store.set("notice", "")
+            async with self.ui_lock:
                 if self.store.get("selected") == sid:
                     self.store.set("history_anchor", "")
-                    self.store.set("history_part", "-1")
+                    self.store.set("history_part", "0")
                     self.store.set("history_content", "answer")
-                    await self.refresh_panel()
+                    if self.store.get("screen") == Screens.history.state:
+                        bg = self.background.bg(
+                            self.bot, self.settings.allowed_user_id, self.settings.allowed_user_id
+                        )
+                        async with foreground(bg) as manager:
+                            await open_screen(manager, Screens.chat, read=False)
+                    elif self.store.get("screen"):
+                        await self.render_panel()
         for r in rows:
             self.store.processed(r["id"])
 

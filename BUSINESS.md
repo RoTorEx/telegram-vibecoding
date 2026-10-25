@@ -12,7 +12,7 @@ Main Deck and its navigation button use 🏠. Main Deck has Settings and Termina
 side by side, followed by Location and Journal. Its text shows session counts,
 without a selected location or path. Terminal reports bot/Core versions, protocol,
 host, Core revision/health, native process, intake, queued inputs and session/
-question/unread counts. Model, reasoning and Plan controls live directly in the chat; Settings explains
+question/unread counts. Model, reasoning and Plan controls live in session Config; Settings explains
 that location. Account Limits is available from Main Deck and shows native quota
 windows, remaining percentages and reset timestamps with Warsaw's actual zone.
 Unknown/unsupported data stays unavailable; reset credits are never consumed.
@@ -33,19 +33,20 @@ that active work will stop. Archiving hides the session from active lists while
 retaining history and project files. There is no permanent-delete action. Locations are existing registered directories; do not expose
 a manual Other location input action in this menu.
 
-The main session screen contains its title, a compact effective-model/status line
-and current agent output. It has exactly three normal control rows: Config and
+The main session screen contains its title, a compact model/status line with
+reasoning effort in parentheses next to the model (for example,
+GPT-6.1-Sol (medium) · Working), and current agent output. It has exactly three normal control rows: Config and
 Details; Chat history and emergency Stop; Back and Deck. Config contains model,
 reasoning and Plan controls. Do not put these controls, role tabs, Images or
 history pagination on the main screen. A long current answer starts at its first
 page and indicates more pages in Chat history. Native pending questions add
 only their required answer controls. Stop retains native identity and history.
 
-Chat history is a book reader of the entire retained conversation. A chapter is
-one execution iteration: the initial user request through the agent's terminal
-completion. Steering additions, question answers, progress, published reasoning,
-questions and final responses stay in chronological order inside that chapter.
-A new request after completion begins a fresh page/chapter. Never infer chapter
+Chat history is a book reader of the entire retained conversation. An iteration
+spans the initial user request through the agent's terminal completion, including an interruption confirmed by the agent after Stop.
+Pressing Stop alone never ends an iteration. Steering additions, question
+answers, progress, published reasoning, questions and final responses stay in chronological order inside that iteration.
+A new request after completion begins a fresh page/iteration. Never infer iteration
 boundaries from each user event: that hides replies after steering additions.
 The reader follows the retained Core event feed incrementally, with a full
 refresh every minute to reflect seven-day expiry. Existing steering anchors
@@ -58,14 +59,22 @@ label. Text pages reserve 3500 visible UTF-16 units including role headings,
 leaving room for title/status and counters within Telegram's 4096-unit limit.
 Keep all published reasoning text, including code, in history. Raw tool output
 and unpublished reasoning are not conversation events. Repeat author/type labels
-on continuation pages.
+on continuation pages. Render published reasoning in blockquotes, with its
+Reasoning author label outside the quote; preserve its text and formatting
+across page boundaries.
 
-Page arrows read continuously across chapter boundaries: forward enters the next
-user page; backward enters the preceding chapter's last page. Chapter arrows
-always jump to the user page at the start of the adjacent chapter. Opening Chat
-history starts at the current chapter's first user page. Back restores the live
+Accepted text, images or voice sent while browsing history return the selected
+session to its main dialog controls, for both steering and new iterations.
+Question answers follow the same rule. Keep the captured input target and avoid
+replacing a different session/menu selected while delivery was pending.
+Automatic return does not acknowledge a completion.
+
+Page arrows read continuously across iteration boundaries: forward enters the next
+user page; backward enters the preceding iteration's last page. Iteration arrows
+always jump to the user page at the start of the adjacent iteration. Opening Chat
+history starts at the current iteration's first user page. Back restores the live
 session. Browsing uses a captured anchor/page cursor, so new output does not jump
-the reader to another chapter. Current activity/elapsed time remains in the
+the reader to another iteration. Current activity/elapsed time remains in the
 header. There are no You/Codex/Updates filters or separate image gallery controls.
 
 Images are actual page media, scoped to their original request. User uploads
@@ -76,7 +85,7 @@ Telegram's 1024-unit caption limit; continue long text on text pages. Photos use
 the 10 MB photo ceiling; larger supported originals (up to the existing 20 MB transport ceiling)
 use documents, and GIF uses animation. Returning to a text page removes media
 from the working panel. Preserve downloadable originals and attachment anchors.
-Only explicitly viewing the latest chapter's final page, or a complete current
+Only explicitly viewing the latest iteration's final page, or a complete current
 answer, acknowledges a completion. Browsing user/older/partial pages, Config,
 Details and background refreshes never mark new outcomes read.
 
@@ -170,7 +179,7 @@ an output format. The live compact preview keeps its existing code filtering; hi
 the full published progress and reasoning summaries.
 
 The compact answer preview uses its existing 3200-unit budget. History packs
-role blocks using the chapter budgets above. Mixed/export views use bold author/type labels: 👤 You, 🤖 Codex · Answer,
+role blocks using the iteration budgets above. Mixed/export views use bold author/type labels: 👤 You, 🤖 Codex · Answer,
 💬 Codex · Progress, 🧠 Codex · Reasoning, or a labeled question/system outcome.
 Quote the original user input; use a visible divider only between distinct
 blocks sharing a page. Reopen formatting on every page, including quotes/code.
