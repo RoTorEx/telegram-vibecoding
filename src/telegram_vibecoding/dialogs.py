@@ -258,6 +258,31 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
         }
         parts = conversation_parts(output, live, rich=True, view=content, compact=True)
         attachments: list[dict] = []
+        if screen == Screens.chat and len(parts) > 1:
+            answers = [
+                e
+                for e in conversation["replies"]
+                if e["kind"] == "message"
+                and e["payload"].get("phase") != "commentary"
+                and e["payload"].get("text")
+            ]
+            completion = max(
+                (e["id"] for e in conversation["replies"] if e["kind"] == "completed"), default=0
+            )
+            delivered = [
+                app.store.queue_answer(e, session, completion if app.read_requested else 0) for e in answers
+            ]
+            if (
+                delivered
+                and all(delivered)
+                and not questions
+                and not any(
+                    e["kind"] == "error"
+                    or (e["kind"] == "completed" and e["payload"].get("status") != "completed")
+                    for e in conversation["replies"]
+                )
+            ):
+                parts = [""]
         if screen == Screens.history:
             if live:
                 conversation = {
@@ -600,6 +625,7 @@ async def choose_session(c, widget, manager, item_id):
         await c.answer("This session is closed.")
         return
     app.store.set("selected", item_id)
+    app.store.answer_visit(new=True)
     app.store.set("location", session["cwd"])
     app.store.set("history_anchor", "")
     app.store.set("history_part", "-1")
@@ -976,6 +1002,8 @@ def make_dialog() -> Dialog:
 async def open_screen(manager: DialogManager, screen: State, *, read: bool = True) -> None:
     app = runtime(manager)
     app.store.set("notice", "")
+    if screen == Screens.chat and read:
+        app.store.answer_visit(new=True)
     app.store.set("mode", "chat" if screen in {Screens.chat, Screens.history} else "menu")
     app.store.set("screen", screen.state)
     if screen == Screens.sessions:

@@ -13,7 +13,9 @@ questions and answers through completion. Consecutive roles share pages when
 they fit, so the conversation reads from top to bottom. Image pages show attached media
 directly; text pages remove it. Main Deck contains account Limits and reset
 times. Completion notices show elapsed work time and Open session; the active
-panel moves below notices and keeps its captured session context.
+panel moves below notices and keeps its captured session context. Long answers
+arrive in full as consecutive messages above the controls. Their parts remain in
+Telegram after follow-ups; Chat history still contains the complete conversation.
 
 Text and images go directly to Vibecoding Core.
 

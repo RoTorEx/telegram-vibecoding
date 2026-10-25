@@ -38,8 +38,8 @@ reasoning effort in parentheses next to the model (for example,
 GPT-6.1-Sol (medium) · Working), and current agent output. It has exactly three normal control rows: Config and
 Details; Chat history and emergency Stop; Back and Deck. Config contains model,
 reasoning and Plan controls. Do not put these controls, role tabs, Images or
-history pagination on the main screen. A long current answer starts at its first
-page and indicates more pages in Chat history. Native pending questions add
+history pagination on the main screen. Long current answers are delivered in full as consecutive standalone messages;
+the controls remain in a separate compact panel below them. Native pending questions add
 only their required answer controls. Stop retains native identity and history.
 
 Chat history is a book reader of the entire retained conversation. An iteration
@@ -115,6 +115,37 @@ send preserves the old panel; failed cleanup never repeats the successful send.
 Startup refreshes the saved view and repairs a panel stranded above newer input. Native questions and free-text
 answers remain associated with their originating session. Errors retain
 navigation exits. An unavailable panel can be replaced without replaying input.
+
+
+## Complete long-answer delivery
+
+When a current answer exceeds the compact preview, publish its complete native
+final messages as ordered standalone Telegram messages, splitting rendered HTML
+at 3500 visible UTF-16 units and repeating the session/part heading. This leaves
+room below the 4096-unit Telegram limit. Preserve every text character and valid
+formatting; do not summarize or require the owner to use history for the rest.
+Short answers retain the existing single-panel presentation. Published answer
+messages have no controls and are never retired as UI panels. After full delivery,
+remove the duplicate compact preview and keep the normal three control rows in
+the working panel below the answer. Keep errors and pending questions visible.
+
+Queue and acknowledge each part durably by view visit, event ID and part number.
+Refreshes and process restarts resume pending parts without repeating accepted
+ones. An explicit session selection replays its current long answer at the chat
+tail; returning from Config/history retains the same visit. Navigating away pauses
+delivery; opening a new visit cancels obsolete pending copies, preserving source
+history and already delivered messages. Follow-ups in the same session keep
+accepted answer parts and may continue the current iteration normally.
+
+Only the selected main session dialog receives full-answer messages. Background
+sessions retain short completion notices and publish full answers when opened;
+history remains a role-aware book. Answer parts are silent and disable previews.
+Keep the panel below each accepted part, including partial-delivery failure.
+Sending an answer automatically does not acknowledge a result. An explicit open
+captures its completion receipt and acknowledges it only after all requested
+parts reach Telegram; a newer completion must remain unread. Local queued/sent
+answer copies expire after seven days from the original event, like other local
+message content. Do not backfill expired answers or change native identities.
 
 ## Deployment boundary
 

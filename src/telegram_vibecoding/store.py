@@ -50,6 +50,12 @@ class BotStore(Database):
             CREATE TABLE IF NOT EXISTS notifications(
                 event_id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, kind TEXT NOT NULL,
                 payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', telegram_id INTEGER);
+            CREATE TABLE IF NOT EXISTS answer_parts(
+                visit TEXT NOT NULL, event_id INTEGER NOT NULL, part INTEGER NOT NULL,
+                session_id TEXT NOT NULL, body TEXT NOT NULL, created REAL NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending', telegram_id INTEGER,
+                completion_id INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(visit,event_id,part));
             CREATE TABLE IF NOT EXISTS session_reads(
                 session_id TEXT PRIMARY KEY, completion_id INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
@@ -121,6 +127,47 @@ class BotStore(Database):
                 (str(event_id),),
             )
 
+    def answer_visit(self, *, new: bool = False) -> str:
+        visit = self.get("answer_visit")
+        if new or not visit:
+            visit = identifier()
+            with self.db:
+                self.db.execute("UPDATE answer_parts SET status='cancelled' WHERE status='pending'")
+                self.set("answer_visit", visit)
+        return visit
+
+    def queue_answer(self, event: dict, session: dict, completion_id: int = 0) -> bool:
+        from html import escape
+
+        from telegram_vibecoding.markdown import render_markdown, split_html
+
+        visit = self.answer_visit()
+        chunks = split_html(render_markdown(event["payload"]["text"]), 3500)
+        with self.db:
+            for part, chunk in enumerate(chunks):
+                heading = f"<b>💬 {escape(session['name'][:55])}</b> · <i>Answer {part + 1}/{len(chunks)}</i>"
+                self.db.execute(
+                    "INSERT OR IGNORE INTO answer_parts(visit,event_id,part,session_id,body,created,completion_id) VALUES(?,?,?,?,?,?,?)",
+                    (
+                        visit,
+                        event["id"],
+                        part,
+                        session["id"],
+                        heading + "\n\n" + chunk,
+                        event.get("created", time.time()),
+                        completion_id,
+                    ),
+                )
+            if completion_id:
+                self.db.execute(
+                    "UPDATE answer_parts SET completion_id=MAX(completion_id,?) WHERE visit=? AND event_id=?",
+                    (completion_id, visit, event["id"]),
+                )
+        return not self.one(
+            "SELECT 1 FROM answer_parts WHERE visit=? AND event_id=? AND status!='sent' LIMIT 1",
+            (visit, event["id"]),
+        )
+
     def viewed(self, sid: str) -> int:
         row = self.one("SELECT completion_id FROM session_reads WHERE session_id=?", (sid,))
         return row["completion_id"] if row else 0
@@ -134,10 +181,11 @@ class BotStore(Database):
             ).rowcount
             outbox = self.db.execute("DELETE FROM outbox WHERE created<=?", (cutoff,)).rowcount
             notices = self.db.execute("DELETE FROM notifications WHERE created<=?", (cutoff,)).rowcount
-        if inbox or outbox or notices:
+            answers = self.db.execute("DELETE FROM answer_parts WHERE created<=?", (cutoff,)).rowcount
+        if inbox or outbox or notices or answers:
             self.db.execute("VACUUM")
             self.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        return {"inbox": inbox, "outbox": outbox, "notifications": notices}
+        return {"inbox": inbox, "outbox": outbox, "notifications": notices, "answer_parts": answers}
 
     def mark_viewed(self, sid: str, completion_id: int) -> None:
         with self.db:

@@ -913,6 +913,53 @@ class BotRuntime:
                 self.store.set("last_notice_message_id", str(sent.message_id))
             await self.refresh_panel()
 
+    async def deliver_answers(self):
+        if self.store.get("screen") != Screens.chat.state:
+            return
+        sid = self.store.get("selected")
+        visit = self.store.answer_visit()
+        rows = self.store.rows(
+            "SELECT * FROM answer_parts WHERE visit=? AND session_id=? AND status='pending' ORDER BY event_id,part",
+            (visit, sid),
+        )
+        published = False
+        try:
+            for row in rows:
+                async with self.send_lock:
+                    await self.throttle()
+                    if (
+                        self.store.get("screen") != Screens.chat.state
+                        or self.store.get("selected") != sid
+                        or self.store.answer_visit() != visit
+                    ):
+                        return
+                    sent = await self.bot.send_message(
+                        self.settings.allowed_user_id,
+                        row["body"],
+                        parse_mode="HTML",
+                        disable_notification=True,
+                        disable_web_page_preview=True,
+                    )
+                    with self.store.db:
+                        self.store.db.execute(
+                            "UPDATE answer_parts SET status='sent',telegram_id=? WHERE visit=? AND event_id=? AND part=?",
+                            (sent.message_id, visit, row["event_id"], row["part"]),
+                        )
+                    self.store.set("last_notice_message_id", str(sent.message_id))
+                    published = True
+            if not self.store.one(
+                "SELECT 1 FROM answer_parts WHERE visit=? AND status='pending' LIMIT 1", (visit,)
+            ):
+                receipt = self.store.one(
+                    "SELECT MAX(completion_id) AS completion FROM answer_parts WHERE visit=? AND session_id=? AND status='sent'",
+                    (visit, sid),
+                )
+                if receipt and receipt["completion"]:
+                    self.store.mark_viewed(sid, receipt["completion"])
+        finally:
+            if published:
+                await self.refresh_panel()
+
     async def completion_duration(self, row: dict) -> str:
         """Measure the captured work interval, excluding earlier completed runs."""
         start = None
@@ -954,6 +1001,7 @@ class BotRuntime:
                 log.warning("Notification retained: %s", type(exc).__name__)
             try:
                 await self.deliver_pending()
+                await self.deliver_answers()
                 async with self.send_lock:
                     await self.clean_retired_panels()
             except TelegramRetryAfter as exc:
