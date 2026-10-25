@@ -16,6 +16,10 @@ class Settings:
     allowed_user_id: int = 0
     host_id: str = "vps"
     bot_username: str = ""
+    confirmation_required: bool = False
+    confirmation_url: str = ""
+    confirmation_host: str = "127.0.0.1"
+    confirmation_port: int = 8790
 
     @property
     def socket(self) -> Path:
@@ -38,6 +42,19 @@ class Settings:
         return cls(data_dir=data, runtime_dir=runtime, token_file=token, **values)
 
     def prepare(self) -> None:
+        if self.confirmation_required:
+            from urllib.parse import urlsplit
+
+            url = urlsplit(self.confirmation_url)
+            if (
+                url.scheme != "https"
+                or not url.hostname
+                or url.username
+                or url.password
+                or url.query
+                or url.fragment
+            ):
+                raise ValueError("Confirmation requires a trusted HTTPS URL without credentials or query")
         for path in [self.data_dir, self.runtime_dir, self.data_dir / "uploads"]:
             path.mkdir(parents=True, exist_ok=True, mode=0o700)
             path.chmod(0o700)

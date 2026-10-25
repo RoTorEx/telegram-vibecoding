@@ -37,6 +37,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
     Update,
+    WebAppInfo,
 )
 from aiogram_dialog import DialogManager, ShowMode, setup_dialogs
 from aiogram_dialog.api.exceptions import UnknownIntent, UnknownState
@@ -46,6 +47,8 @@ from telegram_vibecoding import BOT_NAME
 from telegram_vibecoding.book import SessionBook
 from telegram_vibecoding.client import CoreClient
 from telegram_vibecoding.config import Settings
+from telegram_vibecoding.confirmation import Confirmations, GuardedClient
+from telegram_vibecoding.confirmation import application as confirmation_application
 from telegram_vibecoding.dialogs import Screens, back, go, make_dialog, open_screen
 from telegram_vibecoding.presentation import split_text
 from telegram_vibecoding.store import BotStore
@@ -180,6 +183,12 @@ class BotRuntime:
             self.store.set("mode", "menu")
         self.bot = bot or Bot(settings.read_token())
         self.engine = engine or CoreClient(settings)
+        self.confirmations = Confirmations(self.store) if settings.confirmation_required else None
+        if self.confirmations:
+            self.engine = GuardedClient(self.engine, self.confirmations)
+            # A crash after a non-idempotent control dispatch cannot authorize replay.
+            with self.store.db:
+                self.store.db.execute("UPDATE auth_actions SET status='uncertain' WHERE status='dispatching'")
         self.history_book = SessionBook()
         if self.store.get("history_format") != "iterations-2":
             self.store.set("history_part", "0")
@@ -196,10 +205,19 @@ class BotRuntime:
     def _setup(self):
         controls = Router()
 
-        @controls.message(Command("start", "menu", "sessions", "new", "stop", "help"))
+        @controls.message(Command("start", "menu", "sessions", "new", "stop", "help", "auth"))
         async def command(message: Message, dialog_manager: DialogManager):
             command = (message.text or "").split()[0].split("@")[0]
-            if command == "/stop":
+            if command == "/auth":
+                if self.confirmations:
+                    await self.bot.send_message(
+                        self.settings.allowed_user_id,
+                        "Enroll this phone using a one-time code obtained through SSH. Never send that code in Telegram.",
+                        reply_markup=self.confirmation_markup(),
+                    )
+                else:
+                    await self.send("Device confirmation is not configured on this server.")
+            elif command == "/stop":
                 sid = self.store.get("selected")
                 if sid:
                     await self.engine.call(f"/sessions/{sid}/stop", {})
@@ -415,9 +433,27 @@ class BotRuntime:
             raise ValueError("This question is no longer pending")
         return q
 
-    async def answer_question(self, q: dict, key: str, value: str):
+    async def answer_question(self, q: dict, key: str, value: str, base_answers: dict | None = None):
         qid = q["id"]
-        answers = json.loads(self.store.get("answers:" + qid, "{}"))
+        answers = (
+            dict(base_answers)
+            if base_answers is not None
+            else json.loads(self.store.get("answers:" + qid, "{}"))
+        )
+        if base_answers is not None:
+            current = json.loads(self.store.get("answers:" + qid, "{}"))
+            candidate = {**answers, key: value}
+            if current != answers and current != candidate:
+                raise ValueError("The question answers changed. Review and answer again.")
+        if self.confirmations and not self.confirmations.grant.get():
+            from telegram_vibecoding.confirmation import ConfirmationRequired
+
+            self.confirmations.stage(
+                self.confirmations.source.get() + ":answer:" + qid + ":" + key,
+                "answer",
+                {"question": q, "key": key, "value": value, "answers": answers},
+            )
+            raise ConfirmationRequired()
         answers[key] = value
         self.store.set("answers:" + qid, json.dumps(answers))
         if not self.store.get("answers_saved:" + qid):
@@ -482,7 +518,7 @@ class BotRuntime:
         token = (text.split() or [""])[0].split("@")[0]
         return (
             bool(body.get("callback_query"))
-            or token in {"/start", "/menu", "/sessions", "/new", "/stop", "/help"}
+            or token in {"/start", "/menu", "/sessions", "/new", "/stop", "/help", "/auth"}
             or (
                 not body.get("_relay", {}).get("input_action")
                 and bool(re.match(r"^/[A-Za-z][A-Za-z0-9_]*(?:@\w+)?(?:\s|$)", text))
@@ -490,6 +526,15 @@ class BotRuntime:
         )
 
     async def process_control(self, row: dict):
+        auth = self.confirmations
+        marker = auth.source.set(f"control:{row['id']}") if auth else None
+        try:
+            await self._process_control(row)
+        finally:
+            if auth and marker is not None:
+                auth.source.reset(marker)
+
+    async def _process_control(self, row: dict):
         body = json.loads(row["body"])
         if not authorized(body, self.settings.allowed_user_id):
             self.store.processed(row["id"])
@@ -634,6 +679,64 @@ class BotRuntime:
         return str(dest)
 
     async def process_messages(self, rows: list[dict]):
+        auth = self.confirmations
+        if not auth:
+            return await self._process_messages(rows)
+        bodies = [json.loads(r["body"]) for r in rows]
+        if not all(authorized(b, self.settings.allowed_user_id) for b in bodies):
+            for row in rows:
+                self.store.processed(row["id"])
+            return
+        capture = bodies[0].get("_relay", {})
+        needs_confirmation = rows[0]["mode"] in {"chat", "input"} or capture.get("new_session_path")
+        if not needs_confirmation:
+            return await self._process_messages(rows)
+        action = auth.input_action(rows)
+        if action is None:
+            sid = capture.get("input_session") if rows[0]["mode"] == "input" else rows[0]["session_id"]
+            if capture.get("new_session_path"):
+                sid = None
+            session = await self.engine.call(f"/sessions/{sid}") if sid else None
+            questions = await self.engine.call(f"/sessions/{sid}/questions") if sid else []
+            auth.stage_input(
+                rows,
+                {
+                    "target": {
+                        "session_id": sid,
+                        "name": (session or {}).get("name", "New session"),
+                        "cwd": capture.get("new_session_path") or (session or {}).get("cwd", ""),
+                    },
+                    "questions": questions,
+                    "answers": {
+                        q["id"]: json.loads(self.store.get("answers:" + q["id"], "{}")) for q in questions
+                    },
+                },
+            )
+            return
+        if action["status"] != "approved":
+            return
+        if not self.store.one(
+            "SELECT 1 FROM auth_devices WHERE id=? AND revoked IS NULL", (action["device_id"],)
+        ):
+            raise ValueError("The confirming device was revoked")
+        frozen = json.loads(action["payload"])["context"]
+        # Settings can change separately; an approved input cannot follow a moved project.
+        target = frozen["target"]
+        if target["session_id"]:
+            current = await self.engine.call(f"/sessions/{target['session_id']}")
+            if current["cwd"] != target["cwd"]:
+                raise ValueError("Session directory changed after confirmation. Send the request again.")
+        marker = auth.grant.set(True)
+        try:
+            await self._process_messages(rows, frozen=frozen)
+            auth.completed(action["id"])
+        except ValueError:
+            auth.completed(action["id"], "failed")
+            raise
+        finally:
+            auth.grant.reset(marker)
+
+    async def _process_messages(self, rows: list[dict], frozen: dict | None = None):
         row = rows[0]
         bodies = [json.loads(r["body"]) for r in rows]
         if not all(authorized(b, self.settings.allowed_user_id) for b in bodies):
@@ -677,14 +780,22 @@ class BotRuntime:
             sid = row["session_id"]
             messages = [b["message"] for b in bodies]
             text = "\n\n".join(m.get("text") or m.get("caption") or "" for m in messages)
-            questions = await self.engine.call(f"/sessions/{sid}/questions")
+            questions = (
+                frozen["questions"]
+                if frozen is not None
+                else await self.engine.call(f"/sessions/{sid}/questions")
+            )
             if questions and len(messages) == 1 and messages[0].get("text"):
                 q = questions[0]
                 if q["method"] not in {"item/tool/requestUserInput", "item/agentMessage/asyncUserInput"}:
                     raise ValueError("Use the MCP request buttons to respond.")
-                answers = json.loads(self.store.get("answers:" + q["id"], "{}"))
+                answers = (
+                    frozen["answers"][q["id"]]
+                    if frozen is not None
+                    else json.loads(self.store.get("answers:" + q["id"], "{}"))
+                )
                 next_question = next(x for x in q["payload"]["questions"] if x["id"] not in answers)
-                await self.answer_question(q, next_question["id"], text)
+                await self.answer_question(q, next_question["id"], text, base_answers=answers)
             else:
                 rid = row["request_id"] or f"telegram:{row['id']}"
                 if row["payload"]:
@@ -1147,6 +1258,10 @@ class BotRuntime:
             BotCommand(command="menu", description="Open Main Deck"),
             BotCommand(command="stop", description="Stop the selected task"),
         ]
+        if self.confirmations:
+            commands.append(
+                BotCommand(command="auth", description="Enroll this phone for request confirmation")
+            )
         for language in ("", "en", "ru"):
             await self.bot.set_my_commands(commands, language_code=language)
             try:
@@ -1218,8 +1333,126 @@ class BotRuntime:
                         await self.send(str(exc)[:1000] + "\nUse /menu to continue.")
                     self.store.processed(row["id"])
 
+    def confirmation_markup(self, aid: str = "") -> InlineKeyboardMarkup:
+        url = self.settings.confirmation_url.rstrip("/") + "/"
+        if aid:
+            url += "?request=" + aid
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Confirm request" if aid else "Enroll phone", web_app=WebAppInfo(url=url)
+                    )
+                ]
+            ]
+        )
+
+    async def confirmation_tick(self):
+        auth = self.confirmations
+        if not auth:
+            return
+        auth.expire()
+        for action in self.store.rows(
+            "SELECT * FROM auth_actions WHERE status='pending' AND notice_id IS NULL ORDER BY created LIMIT 5"
+        ):
+            payload = json.loads(action["payload"])
+            if action["kind"] == "input":
+                target = payload["context"]["target"]
+                description = f"{target['name']}\n{target['cwd']}"
+                first = json.loads(payload["rows"][0]["body"]).get("message", {})
+                text = (
+                    first.get("text")
+                    or first.get("caption")
+                    or ("Voice recording" if first.get("voice") else "Image attachment")
+                )
+                description += "\n" + text[:300]
+            elif action["kind"] == "answer":
+                description = "Answer agent question\n" + payload["value"][:300]
+            else:
+                target = payload.get("target", {})
+                description = (
+                    payload.get("label", "Apply agent action")
+                    + "\n"
+                    + target.get("name", "")
+                    + "\n"
+                    + target.get("cwd", "")
+                    + "\n"
+                    + json.dumps(payload["body"], ensure_ascii=False)[:300]
+                )
+            async with self.send_lock:
+                await self.throttle()
+                message = await self.bot.send_message(
+                    self.settings.allowed_user_id,
+                    "🔐 Awaiting device confirmation\n\n"
+                    + description
+                    + "\n\nExpires in 10 minutes. Nothing has been sent to the agent.",
+                    reply_markup=self.confirmation_markup(action["id"]),
+                )
+            with self.store.db:
+                self.store.db.execute(
+                    "UPDATE auth_actions SET notice_id=? WHERE id=?", (message.message_id, action["id"])
+                )
+            self.store.set("last_notice_message_id", str(message.message_id))
+        for action in self.store.rows(
+            "SELECT * FROM auth_actions WHERE status='approved' AND kind!='input' ORDER BY created LIMIT 10"
+        ):
+            if not self.store.one(
+                "SELECT 1 FROM auth_devices WHERE id=? AND revoked IS NULL", (action["device_id"],)
+            ):
+                auth.completed(action["id"], "cancelled")
+                continue
+            payload = json.loads(action["payload"])
+            auth.completed(action["id"], "dispatching")
+            marker = auth.grant.set(True)
+            try:
+                if action["kind"] == "answer":
+                    q = await self.question(payload["question"]["id"])
+                    if q != payload["question"]:
+                        raise ValueError("The question changed. Answer it again.")
+                    await self.answer_question(
+                        q, payload["key"], payload["value"], base_answers=payload["answers"]
+                    )
+                else:
+                    target = payload.get("target", {})
+                    if target.get("id"):
+                        current = await self.engine.call(f"/sessions/{target['id']}")
+                        if current["cwd"] != target["cwd"]:
+                            raise ValueError("The session directory changed after confirmation")
+                    result = await self.engine.call(payload["path"], payload["body"])
+                    if payload["path"] == "/sessions":
+                        self.store.set("selected", result["id"])
+                        self.store.set("location", result["cwd"])
+                        self.store.set("history_content", "answer")
+                        bg = self.background.bg(
+                            self.bot, self.settings.allowed_user_id, self.settings.allowed_user_id
+                        )
+                        async with self.ui_lock, foreground(bg) as manager:
+                            await open_screen(manager, Screens.chat)
+                auth.completed(action["id"])
+                self.store.set("notice", "Confirmed request applied.")
+            except Exception as exc:
+                # The outcome can be unknown after a lost response. Never blindly replay controls.
+                auth.completed(action["id"], "uncertain")
+                self.store.set(
+                    "notice", "Confirmed action could not be verified. Check the session before retrying."
+                )
+                log.warning("Confirmed action requires inspection: %s", type(exc).__name__)
+            finally:
+                auth.grant.reset(marker)
+            await self.refresh_panel()
+
+    async def confirmation_loop(self):
+        while not self.stop_event.is_set():
+            try:
+                await self.confirmation_tick()
+            except Exception as exc:
+                log.warning("Confirmation delivery retained: %s", type(exc).__name__)
+            await asyncio.sleep(0.5)
+
     async def run(self):
         import fcntl
+
+        from aiohttp import web
 
         lock = (self.settings.runtime_dir / "bot.lock").open("a")
         try:
@@ -1230,6 +1463,13 @@ class BotRuntime:
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, self.stop_event.set)
+        confirmation_runner = None
+        if self.confirmations:
+            confirmation_runner = web.AppRunner(confirmation_application(self), access_log=None)
+            await confirmation_runner.setup()
+            await web.TCPSite(
+                confirmation_runner, self.settings.confirmation_host, self.settings.confirmation_port
+            ).start()
         tasks = [
             asyncio.create_task(fn())
             for fn in [
@@ -1239,6 +1479,7 @@ class BotRuntime:
                 self.delivery_loop,
                 self.preview_loop,
                 self.retention_loop,
+                self.confirmation_loop,
             ]
         ]
         stopped = asyncio.create_task(self.stop_event.wait())
@@ -1251,6 +1492,8 @@ class BotRuntime:
             for task in [*tasks, stopped]:
                 task.cancel()
             await asyncio.gather(*tasks, stopped, return_exceptions=True)
+            if confirmation_runner:
+                await confirmation_runner.cleanup()
             await self.engine.close()
             await self.bot.session.close()
             self.store.close()

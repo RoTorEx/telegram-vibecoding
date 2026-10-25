@@ -19,6 +19,11 @@ Telegram after follow-ups; Chat history still contains the complete conversation
 
 Text and images go directly to Vibecoding Core.
 
+Optional device confirmation keeps each executable request pending until an
+independently enrolled phone authorizes it through a biometric Mini App. See
+[activation, enrollment and recovery](docs/confirmation.md). The patch alone does
+not enable protection: trusted private HTTPS and phone acceptance are required.
+
 Run make install and make check. Integration checks require the sibling
 vibecoding-core checkout; the deployed bot has no Core package dependency.
 Common Compose operations are run from the parent Remote Vibecoding workspace.

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Add optional per-request Telegram Mini App biometric confirmation with independent one-use SSH enrollment, device revocation, signed immutable requests, media previews, durable pending input and protection for session controls and question answers. Activation requires private trusted HTTPS and phone enrollment.
+
 ## [0.1.21] - 2026-10-25
 
 - Display and answer asynchronous native questions using normal choice/free-text controls and Waiting state, including while the agent continues independent work.

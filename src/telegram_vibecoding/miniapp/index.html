@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Confirm agent request</title>
+  <link rel="stylesheet" href="./style.css">
+  <script src="https://telegram.org/js/telegram-web-app.js?64"></script>
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <main>
+    <h1>Confirm agent request</h1>
+    <p id="status" role="status">Opening secure confirmation…</p>
+    <section id="request" hidden><h2 id="target"></h2><pre id="content"></pre><div id="media"></div></section>
+    <div id="actions" hidden>
+      <button id="approve">Confirm with biometrics</button>
+      <button id="cancel" class="secondary">Reject this request</button>
+    </div>
+    <form id="enrollment" hidden>
+      <p>First use requires an enrollment code from your administrator SSH session. Never send this code in the bot chat.</p>
+      <label for="code">One-time enrollment code</label>
+      <input id="code" type="password" autocomplete="off" required>
+      <button type="submit">Enroll this phone</button>
+    </form>
+    <p class="note">Only this request is authorized. Other messages remain locked. Results already sent to Telegram remain readable in your Telegram account.</p>
+  </main>
+</body>
+</html>

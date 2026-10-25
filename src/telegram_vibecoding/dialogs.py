@@ -442,6 +442,7 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
             f"Core: {'🟢 Healthy' if health.get('ok') else '🔴 Unavailable'}\n"
             f"Native agent: {'🟢 Running' if health.get('codex_running') else '⚪ Stopped'}\n"
             f"Intake: {'🟢 Accepting' if health.get('accepting') else '⏳ Draining'}"
+            f"\nDevice confirmation: {'🔐 Required' if app.confirmations else '⚪ Not enabled'}"
             f"\n\n<b>📊 Workload</b>\nSessions: {len(sessions)} · Active: {sum(working(s) for s in sessions)}"
             f"\nQueued inputs: {health.get('pending_requests', 0)}"
             f"\nQuestions: {sum(s.get('pending_questions', int(s['status'] == 'waiting')) for s in sessions)}"

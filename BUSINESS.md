@@ -6,6 +6,51 @@ Aleksey uses this private Telegram interface to work with native host agents
 through Vibecoding Core. Only the configured numeric owner in their private
 chat may send input or use callbacks. No extra LLM or rewritten prompts.
 
+## Optional device confirmation
+
+The owner requested protection against a stolen Telegram account or phone while
+keeping Telegram text, images and voice. When confirmation_required is enabled,
+each executable input and Core mutation requires its own enrolled-device proof.
+Read-only navigation and Telegram-delivered history remain account-readable.
+There is no account-wide unlock, automatic enrollment, Telegram-only recovery,
+or password fallback when biometrics are unavailable. Native execution remains
+unchanged after a request is authorized; this does not add shell-command approvals.
+
+Telegram BiometricManager unlocks a random device secret from local secure
+storage. The client signs a server challenge using HMAC-SHA-256. The server checks
+fresh signed Telegram initData, owner, enrolled device, immutable request digest,
+one-use proof, status and expiry. A deviceId or client success boolean is never
+authorization. The API is not hardware attestation of a fresh face scan: the
+exportable secret, the official client, HTTPS origin and phone OS are trusted.
+Biometrics means the device's enrolled biometric users, not our own face database.
+
+An administrator enrolls a phone with an independent 256-bit one-use code valid
+for ten minutes. Existing active device keys cannot be replaced without SSH
+revocation. Each request expires after ten minutes to allow reviewing recordings;
+each proof expires after sixty seconds or the request deadline, whichever comes
+first. Mini App initData must be no older than five minutes, with thirty seconds
+of future-clock tolerance. These bounds limit stolen/replayed authorization data;
+expiry leaves the agent untouched and requires a new request. At most 100 requests
+may await confirmation. API limits are 120 authenticated requests per minute and
+five enrollment attempts per minute, globally, to bound local endpoint abuse.
+These are availability bounds, not substitutes for random secrets or VPN access.
+
+Pending input keeps its captured session/directory, original Telegram media IDs
+and question/answer context across restart. Photos and recordings can be reviewed
+before authorization. Approval of one request never releases another. Late album
+parts cannot extend a signed batch. Cancelled/expired input is not executed;
+retries of accepted native messages reuse existing stable request identities.
+Controls with an unknown dispatch outcome are marked uncertain and never blindly
+replayed. Auth request payloads follow the seven-day local interface retention;
+active pending work remains protected. Device secrets live only in private bot.db
+and biometric device storage, and must remain in private backup snapshots.
+
+Serve the app through trusted HTTPS reachable only through the owner's VPN.
+Loopback port 8790 is for the host gateway, not public access. New installations
+remain compatible with the existing transport until explicit configuration and
+phone acceptance; shipping the capability does not mean protection is activated.
+Configuration, enrollment, recovery and limitations are in docs/confirmation.md.
+
 ## Interaction contract
 
 Main Deck and its navigation button use 🏠. Main Deck has Settings and Terminal
