@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.19] - 2026-10-25
+
 - Suppress completion notifications for the session currently open in chat or history, preserving background notices, durable deduplication and normal panel updates.
 
 ## [0.1.18] - 2026-10-25
