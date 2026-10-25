@@ -446,3 +446,47 @@ async def test_background_notice_is_suppressed_if_owner_opens_session_during_thr
     )
     assert runtime.store.viewed(sid) == 0
     assert not any(isinstance(m, SendMessage) and "✅ Finished" in m.text for m in transport.calls)
+
+
+@pytest.mark.parametrize("button", [False, True])
+async def test_async_question_has_waiting_state_options_history_and_normal_reply(app, button):
+    runtime, transport, engine, native = app
+    await command(app, "/start")
+    await click(app, "📍 Location")
+    await click(app, "1")
+    await click(app, "➕ New")
+    sid = runtime.store.get("selected")
+    await command(app, "Task")
+    await settle(engine)
+    thread = engine.store.session(sid)["thread_id"]
+    engine.on_event(
+        "item/completed",
+        {
+            "threadId": thread,
+            "item": {
+                "id": "async-q",
+                "type": "agentMessage",
+                "text": "Where?",
+                "questions": [{"title": "Where?", "options": ["Here", "Elsewhere"]}],
+            },
+        },
+    )
+    await runtime.refresh_panel()
+    current = panel(transport)
+    assert "Waiting for your answer" in current.text and "Where?" in current.text
+    assert "Here" in [b.text for row in current.reply_markup.inline_keyboard for b in row]
+    await click(app, "📖 Chat history")
+    assert "Codex · Question" in panel(transport).text and "Where?" in panel(transport).text
+    await click(app, "⬅️ Back")
+    if button:
+        await click(app, "Here")
+    else:
+        await command(app, "Here")
+    await settle(engine)
+    await runtime.refresh_panel()
+    assert "Waiting for your answer" not in panel(transport).text
+    assert engine.store.session(sid)["status"] == "working"
+    assert [p for m, p in native.calls if m == "turn/steer"][-1]["input"] == [
+        {"type": "text", "text": "Here"}
+    ]
+    assert not any(m == "response" for m, p in native.calls)

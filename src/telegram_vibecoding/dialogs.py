@@ -367,7 +367,7 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
         if questions and screen == Screens.chat:
             q = questions[0]
             app.store.set("question_session:" + q["id"], sid)
-            if q["method"] == "item/tool/requestUserInput":
+            if q["method"] in {"item/tool/requestUserInput", "item/agentMessage/asyncUserInput"}:
                 answers = json.loads(app.store.get("answers:" + q["id"], "{}"))
                 unanswered = [
                     (i, x) for i, x in enumerate(q["payload"]["questions"]) if x["id"] not in answers

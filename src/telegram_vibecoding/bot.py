@@ -680,7 +680,7 @@ class BotRuntime:
             questions = await self.engine.call(f"/sessions/{sid}/questions")
             if questions and len(messages) == 1 and messages[0].get("text"):
                 q = questions[0]
-                if q["method"] != "item/tool/requestUserInput":
+                if q["method"] not in {"item/tool/requestUserInput", "item/agentMessage/asyncUserInput"}:
                     raise ValueError("Use the MCP request buttons to respond.")
                 answers = json.loads(self.store.get("answers:" + q["id"], "{}"))
                 next_question = next(x for x in q["payload"]["questions"] if x["id"] not in answers)

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Display and answer asynchronous native questions using normal choice/free-text controls and Waiting state, including while the agent continues independent work.
+
 ## [0.1.20] - 2026-10-25
 
 - Deliver complete long answers as consecutive persistent messages above the session controls, with durable per-part retries, session-scoped replay, and seven-day local retention.

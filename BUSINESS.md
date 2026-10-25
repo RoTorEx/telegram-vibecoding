@@ -194,7 +194,9 @@ Lists distinguish Connecting, Transcribing, Working/live activity, queued input,
 questions waiting for the owner, finished unread results waiting for the owner,
 Read/Idle, Failed, Interrupted and Uncertain. Unknown statuses remain visible.
 Pending questions take precedence over active-turn markers, including native
-user-input and MCP elicitation contracts. Result read state uses the durable
+user-input, asynchronous agentMessage questions and MCP elicitation contracts.
+Async questions use the same option/free-text controls and Waiting display as
+synchronous user input; Core owns their distinct native delivery mechanism. Result read state uses the durable
 completion cursor independently of execution state. Relative ages use italic
 parenthesized approximate notation, e.g. (~1h); elapsed active time follows the
 same notation. Absolute detail/restart timestamps retain their Warsaw zone.
