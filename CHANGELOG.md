@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.17] - 2026-10-25
+
 - Fix missing agent replies in history by grouping complete execution iterations, including steering additions, questions and published reasoning, instead of splitting at every user input.
 - Pack consecutive role blocks into readable pages, preserve complete published text, and map existing history cursors to the corrected chapters.
 
