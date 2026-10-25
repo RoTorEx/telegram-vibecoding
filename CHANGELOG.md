@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.22] - 2026-10-26
+
 - Add optional per-request Telegram Mini App biometric confirmation with independent one-use SSH enrollment, device revocation, signed immutable requests, media previews, durable pending input and protection for session controls and question answers. Activation requires private trusted HTTPS and phone enrollment.
 
 ## [0.1.21] - 2026-10-25
