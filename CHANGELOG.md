@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.20] - 2026-10-25
+
 - Deliver complete long answers as consecutive persistent messages above the session controls, with durable per-part retries, session-scoped replay, and seven-day local retention.
 
 ## [0.1.19] - 2026-10-25
