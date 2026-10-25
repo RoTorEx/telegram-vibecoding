@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.18] - 2026-10-25
+
 - Show reasoning effort beside the model, rename history chapters to iterations, and quote published reasoning while preserving full conversation order.
 - Return from history to the session dialog after accepted input, including follow-ups and question answers; preserve iteration boundaries until actual completion or confirmed interruption.
 
