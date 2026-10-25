@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.21] - 2026-10-25
+
 - Display and answer asynchronous native questions using normal choice/free-text controls and Waiting state, including while the agent continues independent work.
 
 ## [0.1.20] - 2026-10-25
