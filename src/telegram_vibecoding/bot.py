@@ -758,6 +758,12 @@ class BotRuntime:
                     blocked.add(row["session_id"])
             await asyncio.sleep(0.3)
 
+    def watching_session(self, sid: str) -> bool:
+        return self.store.get("selected") == sid and self.store.get("screen") in {
+            Screens.chat.state,
+            Screens.history.state,
+        }
+
     def queue_update(self, event: dict):
         if (
             event["kind"] in {"completed", "attachment"}
@@ -767,13 +773,16 @@ class BotRuntime:
         ):
             with self.store.db:
                 self.store.db.execute(
-                    "INSERT OR IGNORE INTO notifications(event_id,session_id,kind,payload,created) VALUES(?,?,?,?,?)",
+                    "INSERT OR IGNORE INTO notifications(event_id,session_id,kind,payload,created,status) VALUES(?,?,?,?,?,?)",
                     (
                         event["id"],
                         event["session_id"],
                         event["kind"],
                         json.dumps(event["payload"]),
                         event.get("created", time.time()),
+                        "suppressed"
+                        if event["kind"] == "completed" and self.watching_session(event["session_id"])
+                        else "pending",
                     ),
                 )
         if event["kind"] == "question":
@@ -864,6 +873,13 @@ class BotRuntime:
             duration = await self.completion_duration(row) if row["kind"] != "attachment" else None
             async with self.send_lock:
                 await self.throttle()
+                if row["kind"] == "completed" and self.watching_session(row["session_id"]):
+                    with self.store.db:
+                        self.store.db.execute(
+                            "UPDATE notifications SET status='suppressed' WHERE event_id=?",
+                            (row["event_id"],),
+                        )
+                    continue
                 if row["kind"] == "attachment":
                     sent = await self.send_attachment(
                         row["session_id"], payload["attachment_id"], locked=True

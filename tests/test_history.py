@@ -368,3 +368,81 @@ def test_reasoning_is_quoted_losslessly_across_pages(tmp_path):
         assert "<blockquote><blockquote>" not in page["text"]
         assert "<b>🧠 Codex · Reasoning" in page["text"] and "<blockquote>" in page["text"]
         assert html_length(page["text"]) <= 3500
+
+
+@pytest.mark.parametrize("history", [False, True])
+async def test_active_session_completion_is_silent_and_remains_in_history(app, history):
+    runtime, transport, engine, native = app
+    await command(app, "/start")
+    await click(app, "📍 Location")
+    await click(app, "1")
+    await click(app, "➕ New")
+    sid = runtime.store.get("selected")
+    await command(app, "Initial task")
+    await settle(engine)
+    thread = engine.store.session(sid)["thread_id"]
+    engine.store.event(sid, "message", {"text": "Progress before follow-up", "phase": "commentary"})
+    engine.store.event(sid, "reasoning_summary", {"parts": ["Published thought before follow-up"]})
+    await runtime.refresh_panel()
+    await command(app, "Follow-up")
+    await settle(engine)
+    if history:
+        await click(app, "📖 Chat history")
+    native.finish(thread, text="Final result")
+    terminal = next(e for e in reversed(engine.store.events(0)) if e["kind"] == "completed")
+    runtime.queue_update(terminal)
+    assert (
+        runtime.store.one("SELECT status FROM notifications WHERE event_id=?", (terminal["id"],))["status"]
+        == "suppressed"
+    )
+    await runtime.deliver_notifications()
+    await runtime.deliver_pending()
+    assert not any(isinstance(m, SendMessage) and "✅ Finished" in m.text for m in transport.calls)
+    assert "Final result" in panel(transport).text
+    assert runtime.store.viewed(sid) == 0
+    if not history:
+        await click(app, "📖 Chat history")
+    for text in [
+        "Initial task",
+        "Progress before follow-up",
+        "Published thought before follow-up",
+        "Follow-up",
+        "Final result",
+    ]:
+        assert text in panel(transport).text
+    assert "Iteration 1/1" in panel(transport).text
+    # Duplicate event delivery after leaving must not resurrect a suppressed notice.
+    await click(app, "🏠 Deck")
+    runtime.queue_update(terminal)
+    await runtime.deliver_notifications()
+    assert not any(isinstance(m, SendMessage) and "✅ Finished" in m.text for m in transport.calls)
+
+
+async def test_background_notice_is_suppressed_if_owner_opens_session_during_throttle(app):
+    runtime, transport, engine, native = app
+    await command(app, "/start")
+    await click(app, "📍 Location")
+    await click(app, "1")
+    await click(app, "➕ New")
+    sid = runtime.store.get("selected")
+    engine.store.event(sid, "user", {"text": "Task"})
+    terminal_id = engine.store.event(sid, "completed", {"status": "completed"})
+    await click(app, "🏠 Deck")
+    terminal = next(e for e in engine.store.events(0) if e["id"] == terminal_id)
+    runtime.queue_update(terminal)
+    assert (
+        runtime.store.one("SELECT status FROM notifications WHERE event_id=?", (terminal_id,))["status"]
+        == "pending"
+    )
+
+    async def enter_session():
+        runtime.store.set("screen", "Screens:chat")
+
+    runtime.throttle = enter_session
+    await runtime.deliver_notifications()
+    assert (
+        runtime.store.one("SELECT status FROM notifications WHERE event_id=?", (terminal_id,))["status"]
+        == "suppressed"
+    )
+    assert runtime.store.viewed(sid) == 0
+    assert not any(isinstance(m, SendMessage) and "✅ Finished" in m.text for m in transport.calls)

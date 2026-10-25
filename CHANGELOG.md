@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Suppress completion notifications for the session currently open in chat or history, preserving background notices, durable deduplication and normal panel updates.
+
 ## [0.1.18] - 2026-10-25
 
 - Show reasoning effort beside the model, rename history chapters to iterations, and quote published reasoning while preserving full conversation order.

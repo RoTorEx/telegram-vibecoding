@@ -243,10 +243,17 @@ subsequent commands, expired acknowledgements and stale polling health.
 
 ## Completion notices and image delivery
 
-A terminal event sends a short standalone owner notification containing location,
+A background terminal event sends a short standalone owner notification containing location,
 session name and outcome (finished, failed, interrupted or the native terminal
 status). A durable event-keyed delivery record prevents resending a known success
-on restart; failed sends remain pending. Notifications never mark a result read
+on restart; failed sends remain pending. Suppress completion notices when the
+owner has that session open in its chat or history screen. Persist suppression
+at event capture and recheck immediately before sending, including after retries
+and throttling; leaving the session later must not resurrect a suppressed notice.
+A remembered selection on Main Deck, menus, or a different open session does not
+suppress background notices. Image-original delivery remains independent.
+Suppression does not acknowledge the result or skip normal panel updates.
+Notifications never mark a result read
 or replace the working panel. Ignore historical events predating the feature's
 first activation. Session lists retain their explicit-view unread count.
 
