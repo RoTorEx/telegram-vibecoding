@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Fix missing agent replies in history by grouping complete execution iterations, including steering additions, questions and published reasoning, instead of splitting at every user input.
+- Pack consecutive role blocks into readable pages, preserve complete published text, and map existing history cursors to the corrected chapters.
+
 ## [0.1.16] - 2026-10-24
 
 - Replace role filters and the image gallery button with a dedicated chapter/page history reader, including inline request-scoped images and continuous page navigation.

@@ -43,6 +43,7 @@ from aiogram_dialog.api.exceptions import UnknownIntent, UnknownState
 from aiogram_dialog.manager.message_manager import MessageManager
 
 from telegram_vibecoding import BOT_NAME
+from telegram_vibecoding.book import SessionBook
 from telegram_vibecoding.client import CoreClient
 from telegram_vibecoding.config import Settings
 from telegram_vibecoding.dialogs import Screens, back, go, make_dialog, open_screen
@@ -179,6 +180,10 @@ class BotRuntime:
             self.store.set("mode", "menu")
         self.bot = bot or Bot(settings.read_token())
         self.engine = engine or CoreClient(settings)
+        self.history_book = SessionBook()
+        if self.store.get("history_format") != "iterations-2":
+            self.store.set("history_part", "0")
+            self.store.set("history_format", "iterations-2")
         self.dp = Dispatcher(storage=SQLiteFSM(self.store))
         self.dp["runtime"] = self
         self.last_send = 0.0

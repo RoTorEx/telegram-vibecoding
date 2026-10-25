@@ -7,7 +7,10 @@ directory, then a session. Sending text, images or voice from the location's
 session list starts a new session there. Session controls have three rows:
 Config/Details, Chat history/Stop, and Back/Deck. Config contains model, reasoning
 and Plan settings. History reads ordered pages continuously and offers separate
-chapter jumps to the next/previous user input. Image pages show attached media
+chapter jumps between execution iterations. Each chapter starts at the initial
+user request and includes steering additions, progress, published reasoning,
+questions and answers through completion. Consecutive roles share pages when
+they fit, so the conversation reads from top to bottom. Image pages show attached media
 directly; text pages remove it. Main Deck contains account Limits and reset
 times. Completion notices show elapsed work time and Open session; the active
 panel moves below notices and keeps its captured session context.

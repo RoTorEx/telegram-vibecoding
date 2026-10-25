@@ -41,15 +41,24 @@ history pagination on the main screen. A long current answer starts at its first
 page and indicates more pages in Chat history. Native pending questions add
 only their required answer controls. Stop retains native identity and history.
 
-Chat history is a book reader. One chapter is a user input plus subsequent agent
-output up to the next user input. A chapter always starts with the original user
-message on its own page, followed by lossless ordered response/progress pages.
-Do not mix the end of an agent response and the next user message on one page.
-Keep a fitting user message whole; reserve up to 3700 visible UTF-16 units for
-its body, leaving room for title/status, author and chapter/page counters within
-Telegram's 4096-unit limit. Oversized user input continues on explicitly labeled
-You pages; the full original remains intact. Agent blocks use the existing
-3000-unit body budget. Repeat concise role labels on continuation pages.
+Chat history is a book reader of the entire retained conversation. A chapter is
+one execution iteration: the initial user request through the agent's terminal
+completion. Steering additions, question answers, progress, published reasoning,
+questions and final responses stay in chronological order inside that chapter.
+A new request after completion begins a fresh page/chapter. Never infer chapter
+boundaries from each user event: that hides replies after steering additions.
+The reader follows the retained Core event feed incrementally, with a full
+refresh every minute to reflect seven-day expiry. Existing steering anchors
+resolve to their containing iteration; reset legacy page offsets once.
+
+Pack consecutive role blocks onto a page, starting with the user's original
+request and continuing with agent output below it when space permits. A fitting
+user message stays whole; an oversized message continues with a repeated You
+label. Text pages reserve 3500 visible UTF-16 units including role headings,
+leaving room for title/status and counters within Telegram's 4096-unit limit.
+Keep all published reasoning text, including code, in history. Raw tool output
+and unpublished reasoning are not conversation events. Repeat author/type labels
+on continuation pages.
 
 Page arrows read continuously across chapter boundaries: forward enters the next
 user page; backward enters the preceding chapter's last page. Chapter arrows
@@ -60,10 +69,11 @@ the reader to another chapter. Current activity/elapsed time remains in the
 header. There are no You/Codex/Updates filters or separate image gallery controls.
 
 Images are actual page media, scoped to their original request. User uploads
-follow that chapter's user page, and registered output images occupy their
-corresponding image pages. Use a short role caption below Telegram's 1024-unit
-media-caption limit; keep long text on text pages. Photos use the 10 MB photo
-ceiling; larger supported originals (up to the existing 20 MB transport ceiling)
+follow their matching user block, and registered output images occupy their
+corresponding pages. Pack adjacent text into image captions up to 800 visible
+UTF-16 units including role headings, reserving room for metadata within
+Telegram's 1024-unit caption limit; continue long text on text pages. Photos use
+the 10 MB photo ceiling; larger supported originals (up to the existing 20 MB transport ceiling)
 use documents, and GIF uses animation. Returning to a text page removes media
 from the working panel. Preserve downloadable originals and attachment anchors.
 Only explicitly viewing the latest chapter's final page, or a complete current
@@ -156,12 +166,11 @@ Telegram-supported HTML formatting. Preserve original events and user input.
 Bold, italic, strikethrough, headings, links, lists, quotes and code are readable;
 raw HTML is literal text. Tables become readable rows for narrow phone screens,
 preserving headers and cell contents. Do not rewrite the agent prompt to enforce
-an output format. Public progress keeps its existing code filtering.
+an output format. The live compact preview keeps its existing code filtering; history preserves
+the full published progress and reasoning summaries.
 
-Pack agent output into pages of at most 3200 visible UTF-16 units; user-first
-pages use the chapter budget above. Split
-individual role blocks at 3000 units to reserve space for repeated labels and
-part counters. Mixed/export views use bold author/type labels: 👤 You, 🤖 Codex · Answer,
+The compact answer preview uses its existing 3200-unit budget. History packs
+role blocks using the chapter budgets above. Mixed/export views use bold author/type labels: 👤 You, 🤖 Codex · Answer,
 💬 Codex · Progress, 🧠 Codex · Reasoning, or a labeled question/system outcome.
 Quote the original user input; use a visible divider only between distinct
 blocks sharing a page. Reopen formatting on every page, including quotes/code.

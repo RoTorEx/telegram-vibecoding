@@ -212,8 +212,10 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
         v["text"] = "📍 Location\n\nChoose where to work.\n\n" + listing
     elif screen in {Screens.chat, Screens.history} and session:
         cursor = app.store.get("history_anchor") if screen == Screens.history else ""
-        conversation = await app.engine.call(
-            f"/sessions/{sid}/conversation" + (f"?anchor={cursor}" if cursor else "")
+        conversation = (
+            await app.history_book.read(app.engine, sid, cursor)
+            if screen == Screens.history
+            else await app.engine.call(f"/sessions/{sid}/conversation")
         )
         current_live = (await app.engine.call("/live")).get(sid)
         if current_live and session["status"] == "waiting":
@@ -272,15 +274,19 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
                     ],
                 }
             try:
-                attachments = (
-                    await app.engine.call(f"/sessions/{sid}/attachments?anchor={conversation['user']['id']}")
-                    if conversation["user"]
-                    else []
-                )
+                records = await app.engine.call(f"/sessions/{sid}/attachments")
+                aids = {
+                    e["payload"]["attachment_id"]
+                    for e in conversation["replies"]
+                    if e["kind"] == "attachment"
+                }
+                attachments = [
+                    a for a in records if a["user_event_id"] in conversation["anchors"] or a["id"] in aids
+                ]
             except ValueError:
                 pass
             book = chapter_pages(
-                conversation, attachments, app.settings.data_dir / "uploads", user_limit=3700
+                conversation, attachments, app.settings.data_dir / "uploads", page_limit=3500
             )
             parts = [p["text"] for p in book]
         part = int(app.store.get("history_part", "0")) if screen == Screens.history else 0
@@ -290,7 +296,8 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
             json.dumps(
                 {
                     **{k: conversation[k] for k in ["previous", "next"]},
-                    "anchor": conversation["user"]["id"] if conversation["user"] else None,
+                    "anchor": conversation.get("anchor")
+                    or (conversation["user"]["id"] if conversation["user"] else None),
                     "part": part,
                     "parts": len(parts),
                 }

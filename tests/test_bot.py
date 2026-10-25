@@ -505,18 +505,11 @@ async def test_stream_delivery_history_and_navigation_preserve_one_panel(app, ho
         assert await runtime.deliver_pending()
         assert f"Exact native answer {index}" in panel(transport).text
     await click(app, "📖 Chat history")
-    assert (
-        "Original request 1" in panel(transport).text and "Exact native answer 1" not in panel(transport).text
-    )
+    assert "Original request 1" in panel(transport).text and "Exact native answer 1" in panel(transport).text
     await click(app, "⏮ Chapter")
-    assert (
-        "Original request 0" in panel(transport).text and "Exact native answer 0" not in panel(transport).text
-    )
-    await click(app, "Page ▶")
-    assert "Exact native answer 0" in panel(transport).text
+    assert "Original request 0" in panel(transport).text and "Exact native answer 0" in panel(transport).text
     await click(app, "Chapter ⏭")
     assert "Original request 1" in panel(transport).text
-    await click(app, "Page ▶")
     assert "Exact native answer 1" in panel(transport).text
     assert runtime.store.get("panel_id") != first_id
     assert len(transport.messages) == 1
@@ -720,17 +713,16 @@ async def test_long_answer_is_browsable_in_one_panel_without_dropping_text(app):
     answer = "Native answer 🚀\n" * 800
     engine.store.event(sid, "message", {"text": answer})
     await runtime.refresh_panel()
-    from test_markdown import CheckedHTML
+    from test_history import role_bodies
 
     await click(app, "📖 Chat history")
     assert "Original prompt" in panel(transport).text
-    await click(app, "Page ▶")
     bodies = []
     while True:
         current = panel(transport)
         assert len(current.text.encode("utf-16-le")) // 2 <= 4096
-        body = current.text.split("\n\n", 2)[2]
-        bodies.append(CheckedHTML(body).text)
+        body = current.text.split("\n\n", 1)[1]
+        bodies.append(role_bodies([{"text": body}])["🤖 Codex · Answer"])
         labels = [b.text for row in current.reply_markup.inline_keyboard for b in row]
         if "Page ▶" not in labels:
             break
@@ -905,7 +897,7 @@ async def test_absolute_directory_input_is_not_mistaken_for_an_unknown_command(a
     assert not any(method in {"thread/start", "turn/start", "turn/steer"} for method, _ in native.calls)
 
 
-async def test_live_feedback_animates_public_summaries_without_tool_or_code_output(app, monkeypatch):
+async def test_live_feedback_animates_public_summaries_without_raw_tool_or_partial_output(app, monkeypatch):
     from telegram_vibecoding import presentation
 
     runtime, transport, engine, native = app
@@ -933,14 +925,14 @@ async def test_live_feedback_animates_public_summaries_without_tool_or_code_outp
     monkeypatch.setattr(presentation.time, "time", lambda: 110)
     await runtime.refresh_panel()
     await click(app, "📖 Chat history")
-    await click(app, "Page ▶")
     identity = runtime.store.get("panel_id")
     before = panel(transport).text
     labels = [button.text for row in panel(transport).reply_markup.inline_keyboard for button in row]
     assert "00:10 elapsed" in before
     assert "⚙️ Config" not in labels and "Reasoning: medium" not in before
     assert "Checking behavior." in before and "Then verifying recovery." in before
-    assert all(s not in before for s in ["SECRET_CODE", "SECRET_COMMAND", "LIVE_CODE", "TOOL_OUTPUT"])
+    assert "SECRET_CODE" in before and "SECRET_COMMAND" in before
+    assert all(s not in before for s in ["LIVE_CODE", "TOOL_OUTPUT"])
     monkeypatch.setattr(presentation.time, "time", lambda: 112)
     await runtime.refresh_panel()
     labels = [button.text for row in panel(transport).reply_markup.inline_keyboard for button in row]
@@ -1262,11 +1254,10 @@ async def test_background_completion_does_not_mark_read_and_latest_acknowledges(
     await runtime.refresh_panel()
     assert runtime.store.viewed(sid) == 0
     await click(app, "📖 Chat history")
-    await click(app, "Page ▶")
     assert runtime.store.viewed(sid) == first
     await click(app, "⬅️ Back")
     engine.store.event(sid, "user", {"text": "More work"})
-    engine.store.event(sid, "message", {"text": "New result"})
+    engine.store.event(sid, "message", {"text": "New result " * 800})
     second = engine.store.event(sid, "completed", {"status": "completed"})
     await runtime.refresh_panel()
     assert runtime.store.viewed(sid) == first < second
@@ -1274,7 +1265,9 @@ async def test_background_completion_does_not_mark_read_and_latest_acknowledges(
     await click(app, "⏮ Chapter")
     assert runtime.store.viewed(sid) == first
     await click(app, "Chapter ⏭")
-    await click(app, "Page ▶")
+    assert runtime.store.viewed(sid) == first
+    while "Page ▶" in [b.text for row in panel(transport).reply_markup.inline_keyboard for b in row]:
+        await click(app, "Page ▶")
     assert runtime.store.viewed(sid) == second
     from telegram_vibecoding.store import BotStore
 
@@ -1342,7 +1335,6 @@ async def test_new_completion_during_publication_stays_unread(app):
 
     transport.make_request = completing
     await click(app, "📖 Chat history")
-    await click(app, "Page ▶")
     assert later and runtime.store.viewed(sid) == first < later[0]
     await click(app, "🏠 Deck")
     assert "Unread: <b>1</b>" in panel(transport).text
@@ -1727,7 +1719,6 @@ async def test_registered_image_delivers_original_and_remains_browsable(app, tmp
     await runtime.refresh_panel()
     assert not any("Images" in b.text for row in panel(transport).reply_markup.inline_keyboard for b in row)
     await click(app, "📖 Chat history")
-    await click(app, "Page ▶")
     assert isinstance(panel(transport).method, EditMessageMedia)
     assert str(panel(transport).method.media.media.path) == attachment["path"]
     assert len([call for call in transport.calls if isinstance(call, SendDocument)]) == 1
