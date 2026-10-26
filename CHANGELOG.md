@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.24] - 2026-10-26
+
 - Apply one conservative chat-wide budget to sends, edits and cleanup, persist Telegram flood-wait deadlines, and keep polling/readiness independent of delayed startup output. Retain input and answer queues until Telegram permits writes again.
 
 ## [0.1.23] - 2026-10-26
