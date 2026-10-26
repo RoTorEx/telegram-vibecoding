@@ -124,6 +124,7 @@ async def app(host):
     transport = TelegramFake()
     bot = Bot("123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi", session=transport)
     app = BotRuntime(settings, bot=bot, engine=client)
+    app.pacer.interval = 0
 
     async def throttle():
         pass
@@ -608,6 +609,7 @@ async def test_panel_state_survives_runtime_restart_and_native_questions_stay_in
     first_id = runtime.store.get("panel_id")
     replacement = BotRuntime(runtime.settings, bot=runtime.bot, engine=runtime.engine)
     replacement.throttle = runtime.throttle
+    replacement.pacer.interval = 0
     try:
         assert replacement.store.get("selected") == sid
         assert await replacement.refresh_panel()
@@ -741,6 +743,7 @@ async def test_incompatible_fsm_reset_reuses_the_published_panel(app):
     runtime.store.set("screen", "")
     replacement = BotRuntime(runtime.settings, bot=runtime.bot, engine=runtime.engine)
     replacement.throttle = runtime.throttle
+    replacement.pacer.interval = 0
     try:
         await replacement.initialize_panel()
         assert replacement.store.get("panel_id") == first
@@ -809,6 +812,7 @@ async def test_upgrade_recovers_latest_input_from_existing_inbox_and_moves_panel
         runtime.store.db.execute("DELETE FROM meta WHERE key='last_user_message_id'")
     replacement = BotRuntime(runtime.settings, bot=runtime.bot, engine=runtime.engine)
     replacement.throttle = runtime.throttle
+    replacement.pacer.interval = 0
     try:
         await replacement.refresh_panel()
         assert int(replacement.store.get("panel_id")) > 185
@@ -992,6 +996,7 @@ async def test_retired_views_recover_without_deleting_session_history(app, tmp_p
     original_count = len(engine.store.sessions(True)) + len(engine.store.sessions())
     replacement = BotRuntime(runtime.settings, bot=runtime.bot, engine=runtime.engine)
     replacement.throttle = runtime.throttle
+    replacement.pacer.interval = 0
     try:
         await replacement.initialize_panel()
         assert "Main Deck" in panel(transport).text

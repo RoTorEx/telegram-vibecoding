@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Apply one conservative chat-wide budget to sends, edits and cleanup, persist Telegram flood-wait deadlines, and keep polling/readiness independent of delayed startup output. Retain input and answer queues until Telegram permits writes again.
+
 ## [0.1.23] - 2026-10-26
 
 - Finish started long-answer deliveries across session changes, menu navigation and restarts; restore previously cancelled undelivered parts within the seven-day retention window.

@@ -148,8 +148,14 @@ Text and supported images pass unchanged to Core. New messages steer active
 work. The 20 MB Telegram cloud download ceiling is enforced. Agent response parts
 are at most 3200 UTF-16 units, leaving room for the header and notices below the
 4096-unit API limit. Albums use a one-second quiet window and retain their first
-captured target. Outgoing changes are throttled to at least one second, with
-Telegram retry_after taking precedence.
+captured target. All chat writes, including SDK-generated edits and deletion,
+share a minimum 3.1-second interval. This conservative budget stays below twenty
+writes per minute and prevents independent UI/answer/cleanup paths from bursting.
+Telegram retry_after takes precedence: persist its deadline and reject local
+write attempts until it expires without sending more requests. Reads and durable
+input capture continue. Startup notification/panel recovery runs independently
+of polling, so an outgoing cooldown cannot make a connected bot fail readiness.
+Deferred controls and answer parts resume after the cooldown; never bypass it.
 
 The frontend owns bot.db: captured input, UI state, offsets and output refresh
 requests. Input targets are captured before downloads/navigation. Button navigation and streaming edit the current panel. A new owner message

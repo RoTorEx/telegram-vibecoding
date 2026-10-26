@@ -84,6 +84,7 @@ async def test_partial_delivery_resumes_after_restart_without_repeating_accepted
     await click(app, "🏠 Deck")
     replacement = BotRuntime(runtime.settings, bot=runtime.bot, engine=runtime.engine)
     replacement.throttle = runtime.throttle
+    replacement.pacer.interval = 0
     try:
         await replacement.deliver_answers()
         await replacement.deliver_answers()
@@ -227,6 +228,7 @@ async def test_restart_recovers_legacy_cancelled_tail(app):
     transport.make_request = original
     replacement = BotRuntime(runtime.settings, bot=runtime.bot, engine=runtime.engine)
     replacement.throttle = runtime.throttle
+    replacement.pacer.interval = 0
     try:
         await replacement.deliver_answers()
         messages = answer_messages(transport)

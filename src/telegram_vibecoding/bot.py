@@ -50,6 +50,7 @@ from telegram_vibecoding.config import Settings
 from telegram_vibecoding.confirmation import Confirmations, GuardedClient
 from telegram_vibecoding.confirmation import application as confirmation_application
 from telegram_vibecoding.dialogs import Screens, back, go, make_dialog, open_screen
+from telegram_vibecoding.pacing import ChatPacer
 from telegram_vibecoding.presentation import split_text
 from telegram_vibecoding.store import BotStore
 
@@ -182,6 +183,11 @@ class BotRuntime:
             self.store.set("screen", "")
             self.store.set("mode", "menu")
         self.bot = bot or Bot(settings.read_token())
+        for middleware in tuple(self.bot.session.middleware):
+            if isinstance(middleware, ChatPacer):
+                self.bot.session.middleware.unregister(middleware)
+        self.pacer = ChatPacer(self.store, settings.allowed_user_id)
+        self.bot.session.middleware.register(self.pacer)
         self.engine = engine or CoreClient(settings)
         self.confirmations = Confirmations(self.store) if settings.confirmation_required else None
         if self.confirmations:
@@ -313,8 +319,7 @@ class BotRuntime:
                         except TelegramBadRequest as cleanup:
                             if "message is not modified" not in cleanup.message.lower():
                                 raise
-            except TelegramRetryAfter as exc:
-                self.last_send = time.monotonic() + exc.retry_after
+            except TelegramRetryAfter:
                 break
             except TelegramAPIError as exc:
                 log.warning("Old panel cleanup deferred: %s", type(exc).__name__)
@@ -407,6 +412,10 @@ class BotRuntime:
                 await self.render_panel()
             else:
                 await self.open_deck_panel()
+
+    async def startup_loop(self) -> None:
+        await self.startup_ready()
+        await self.stop_event.wait()
 
     async def startup_ready(self) -> None:
         while not self.stop_event.is_set():
@@ -1242,7 +1251,7 @@ class BotRuntime:
         body = update.model_dump(mode="json", exclude_none=True, exclude_unset=True, by_alias=True)
         if self.capture(body):
             row = self.store.one("SELECT * FROM inbox WHERE id=?", (update.update_id,))
-            if row and (self.is_control(body) or row["mode"] == "input"):
+            if row and not self.pacer.remaining and (self.is_control(body) or row["mode"] == "input"):
                 await self.process_navigation(row)
         self.store.set("poll_heartbeat", str(time.time()))
 
@@ -1285,7 +1294,6 @@ class BotRuntime:
             except TelegramBadRequest as exc:
                 if "chat not found" not in str(exc).lower():
                     raise
-        await self.startup_ready()
         self.store.set("bot_pid", str(os.getpid()))
         self.store.set("bot_instance", self.instance)
         self.store.set("poll_heartbeat", str(time.time()))
@@ -1295,6 +1303,8 @@ class BotRuntime:
             try:
                 # UI/input operations must finish before a newer selection can overtake them.
                 for pending_row in self.store.rows("SELECT * FROM inbox WHERE status='pending' ORDER BY id"):
+                    if self.pacer.remaining:
+                        break
                     if self.is_control(json.loads(pending_row["body"])) or pending_row["mode"] == "input":
                         await self.process_navigation(pending_row)
                 stage = "get_updates"
@@ -1486,6 +1496,7 @@ class BotRuntime:
             asyncio.create_task(fn())
             for fn in [
                 self.poll,
+                self.startup_loop,
                 self.inbox_loop,
                 self.events_loop,
                 self.delivery_loop,

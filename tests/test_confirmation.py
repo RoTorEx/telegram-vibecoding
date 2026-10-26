@@ -261,6 +261,7 @@ async def test_pending_input_survives_runtime_restart_and_cannot_change_body(app
     await runtime.process_messages(runtime.store.rows("SELECT * FROM inbox WHERE id=450"))
     action = runtime.store.one("SELECT * FROM auth_actions")
     restarted = BotRuntime(runtime.settings, bot=runtime.bot, engine=runtime.engine.client)
+    restarted.pacer.interval = 0
     restarted.throttle = runtime.throttle
     try:
         assert restarted.store.one("SELECT status FROM inbox WHERE id=450")["status"] == "auth_pending"
