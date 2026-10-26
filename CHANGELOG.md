@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.26] - 2026-10-26
+
 - Decouple durable Telegram intake, callback acknowledgements, ordered navigation and panel publication. Coalesce stale previews, skip unchanged panels, prioritize foreground interaction, and preserve input targets, read receipts and outbox acknowledgements across retries.
 - Replace the conservative 3.1-second write interval with a shared 1.05-second private-chat budget while retaining durable Telegram flood waits. Process transfers independently across sessions and cancel local queued input on authorized Stop/Archive.
 
