@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.23] - 2026-10-26
+
 - Finish started long-answer deliveries across session changes, menu navigation and restarts; restore previously cancelled undelivered parts within the seven-day retention window.
 - Put Config, Details and History together on the first session row, with a full-width Stop row only while work is active.
 
