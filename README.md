@@ -4,9 +4,10 @@ The private Telegram interface of Remote Vibecoding.
 
 Open @GardenSandbox_bot and send /menu. Choose Location, a numbered host
 directory, then a session. Sending text, images or voice from the location's
-session list starts a new session there. Session controls have three rows:
-Config/Details, Chat history/Stop, and Back/Deck. Config contains model, reasoning
-and Plan settings. History reads ordered pages continuously and offers separate
+session list starts a new session there. Session controls put Config, Details
+and History on the first row, an emergency Stop on its own full-width row only
+while work is active, and Back/Deck last. Config contains model, reasoning and
+Plan settings. History reads ordered pages continuously and offers separate
 iteration jumps between execution iterations. Each iteration starts at the initial
 user request and includes steering additions, progress, published reasoning,
 questions and answers through completion. Consecutive roles share pages when

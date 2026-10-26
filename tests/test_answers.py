@@ -55,7 +55,7 @@ async def test_entire_answer_arrives_in_order_and_survives_followups_and_navigat
     await command(app, "Follow-up")
     await settle(engine)
     assert all(i in transport.messages for i in ids)
-    await click(app, "📖 Chat history")
+    await click(app, "📖 History")
     assert all(i in transport.messages for i in ids)
     await click(app, "🏠 Deck")
     await runtime.deliver_answers()
@@ -81,6 +81,7 @@ async def test_partial_delivery_resumes_after_restart_without_repeating_accepted
         await runtime.deliver_answers()
     assert len(answer_messages(transport)) == 1
     transport.make_request = original
+    await click(app, "🏠 Deck")
     replacement = BotRuntime(runtime.settings, bot=runtime.bot, engine=runtime.engine)
     replacement.throttle = runtime.throttle
     try:
@@ -156,3 +157,105 @@ async def test_new_completion_during_full_answer_publication_stays_unread(app):
     await runtime.deliver_answers()
     assert newer and runtime.store.viewed(sid) == old < newer[0]
     assert "A newer result" in panel(transport).text
+
+
+@pytest.mark.parametrize("same_session", [False, True])
+async def test_navigation_during_first_send_finishes_whole_answer(app, same_session):
+    runtime, transport, engine, native = app
+    sid, answer = await completed_answer(app)
+    await runtime.refresh_panel()
+    visit = runtime.store.get("answer_visit")
+    other = engine.store.create_session(engine.store.session(sid)["cwd"], "Other", "medium")["id"]
+    original = transport.make_request
+    switched = False
+
+    async def navigate(bot, method, timeout=None):
+        nonlocal switched
+        result = await original(bot, method, timeout)
+        if isinstance(method, SendMessage) and " · <i>Answer 1/" in method.text and not switched:
+            switched = True
+            if not same_session:
+                runtime.store.set("selected", other)
+                runtime.store.set("screen", "Screens:deck")
+            runtime.store.answer_visit(new=True)
+        return result
+
+    transport.make_request = navigate
+    await runtime.deliver_answers()
+    await runtime.deliver_answers()
+    messages = answer_messages(transport)
+    assert switched and len(messages) > 2
+    assert sum(" · <i>Answer 1/" in m.text for m in messages) == 1
+    assert (
+        "".join(CheckedHTML(m.text.split("\n\n", 1)[1]).text for m in messages)
+        == CheckedHTML(render_markdown(answer)).text
+    )
+    assert all(r["status"] == "sent" for r in runtime.store.rows("SELECT * FROM answer_parts"))
+    assert runtime.store.viewed(sid) == 0
+    if same_session:
+        assert runtime.store.get("answer_visit") == visit
+    else:
+        assert runtime.store.get("selected") == other
+    assert int(runtime.store.get("panel_id")) > max(
+        r["telegram_id"] for r in runtime.store.rows("SELECT * FROM answer_parts")
+    )
+
+
+async def test_restart_recovers_legacy_cancelled_tail(app):
+    runtime, transport, engine, native = app
+    sid, answer = await completed_answer(app)
+    await runtime.refresh_panel()
+    original = transport.make_request
+
+    async def fail_second(bot, method, timeout=None):
+        if isinstance(method, SendMessage) and " · <i>Answer 2/" in method.text:
+            raise TelegramNetworkError(method=method, message="Offline")
+        return await original(bot, method, timeout)
+
+    transport.make_request = fail_second
+    with pytest.raises(TelegramNetworkError):
+        await runtime.deliver_answers()
+    with runtime.store.db:
+        runtime.store.db.execute("UPDATE answer_parts SET status='cancelled' WHERE status!='sent'")
+        runtime.store.db.execute(
+            "INSERT INTO answer_parts SELECT 'never-started',event_id,part,session_id,body,created,'cancelled',NULL,completion_id FROM answer_parts"
+        )
+        runtime.store.db.execute(
+            "INSERT INTO answer_parts SELECT 'expired',event_id,part,session_id,body,0,status,telegram_id,completion_id FROM answer_parts WHERE visit!='never-started'"
+        )
+    await click(app, "🏠 Deck")
+    transport.make_request = original
+    replacement = BotRuntime(runtime.settings, bot=runtime.bot, engine=runtime.engine)
+    replacement.throttle = runtime.throttle
+    try:
+        await replacement.deliver_answers()
+        messages = answer_messages(transport)
+        assert sum(" · <i>Answer 1/" in m.text for m in messages) == 1
+        assert (
+            "".join(CheckedHTML(m.text.split("\n\n", 1)[1]).text for m in messages)
+            == CheckedHTML(render_markdown(answer)).text
+        )
+        assert not replacement.store.one(
+            "SELECT 1 FROM answer_parts WHERE visit IN ('never-started','expired') AND status IN ('pending','sending')"
+        )
+    finally:
+        replacement.store.close()
+
+
+async def test_stop_row_tracks_work_lifecycle(app):
+    runtime, transport, engine, native = app
+    sid, _ = await completed_answer(app)
+
+    def rows():
+        return [[b.text for b in row] for row in panel(transport).reply_markup.inline_keyboard]
+
+    await runtime.refresh_panel()
+    idle = [["⚙️ Config", "ℹ️ Details", "📖 History"], ["⬅️ Back", "🏠 Deck"]]
+    assert rows() == idle
+    await command(app, "Continue")
+    await settle(engine)
+    await runtime.refresh_panel()
+    assert rows() == [idle[0], ["⏹ Stop"], idle[1]]
+    native.finish(engine.store.session(sid)["thread_id"], text="Done")
+    await runtime.refresh_panel()
+    assert rows() == idle

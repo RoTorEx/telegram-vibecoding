@@ -1025,25 +1025,35 @@ class BotRuntime:
             await self.refresh_panel()
 
     async def deliver_answers(self):
-        if self.store.get("screen") != Screens.chat.state:
-            return
-        sid = self.store.get("selected")
-        visit = self.store.answer_visit()
+        active = self.store.get("screen") == Screens.chat.state
+        sid, visit = self.store.get("selected"), self.store.get("answer_visit")
         rows = self.store.rows(
-            "SELECT * FROM answer_parts WHERE visit=? AND session_id=? AND status='pending' ORDER BY event_id,part",
-            (visit, sid),
+            "SELECT a.* FROM answer_parts AS a WHERE a.status IN ('pending','sending') AND ("
+            "EXISTS (SELECT 1 FROM answer_parts AS b WHERE b.visit=a.visit AND b.event_id=a.event_id "
+            "AND b.status IN ('sent','sending')) OR (? AND a.visit=? AND a.session_id=?)) "
+            "ORDER BY a.created,a.event_id,a.visit,a.part",
+            (active, visit, sid),
         )
         published = False
         try:
             for row in rows:
                 async with self.send_lock:
                     await self.throttle()
-                    if (
+                    started = self.store.one(
+                        "SELECT 1 FROM answer_parts WHERE visit=? AND event_id=? AND status IN ('sent','sending') LIMIT 1",
+                        (row["visit"], row["event_id"]),
+                    )
+                    if not started and (
                         self.store.get("screen") != Screens.chat.state
-                        or self.store.get("selected") != sid
-                        or self.store.answer_visit() != visit
+                        or self.store.get("selected") != row["session_id"]
+                        or self.store.get("answer_visit") != row["visit"]
                     ):
-                        return
+                        continue
+                    with self.store.db:
+                        self.store.db.execute(
+                            "UPDATE answer_parts SET status='sending' WHERE visit=? AND event_id=? AND part=?",
+                            (row["visit"], row["event_id"], row["part"]),
+                        )
                     sent = await self.bot.send_message(
                         self.settings.allowed_user_id,
                         row["body"],
@@ -1054,12 +1064,14 @@ class BotRuntime:
                     with self.store.db:
                         self.store.db.execute(
                             "UPDATE answer_parts SET status='sent',telegram_id=? WHERE visit=? AND event_id=? AND part=?",
-                            (sent.message_id, visit, row["event_id"], row["part"]),
+                            (sent.message_id, row["visit"], row["event_id"], row["part"]),
                         )
                     self.store.set("last_notice_message_id", str(sent.message_id))
                     published = True
-            if not self.store.one(
-                "SELECT 1 FROM answer_parts WHERE visit=? AND status='pending' LIMIT 1", (visit,)
+            sid, visit = self.store.get("selected"), self.store.get("answer_visit")
+            if self.store.get("screen") == Screens.chat.state and not self.store.one(
+                "SELECT 1 FROM answer_parts WHERE visit=? AND status IN ('pending','sending') LIMIT 1",
+                (visit,),
             ):
                 receipt = self.store.one(
                     "SELECT MAX(completion_id) AS completion FROM answer_parts WHERE visit=? AND session_id=? AND status='sent'",

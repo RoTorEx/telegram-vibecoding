@@ -504,7 +504,7 @@ async def test_stream_delivery_history_and_navigation_preserve_one_panel(app, ho
             runtime.queue_update(event)
         assert await runtime.deliver_pending()
         assert f"Exact native answer {index}" in panel(transport).text
-    await click(app, "📖 Chat history")
+    await click(app, "📖 History")
     assert "Original request 1" in panel(transport).text and "Exact native answer 1" in panel(transport).text
     await click(app, "⏮ Iteration")
     assert "Original request 0" in panel(transport).text and "Exact native answer 0" in panel(transport).text
@@ -715,7 +715,7 @@ async def test_long_answer_is_browsable_in_one_panel_without_dropping_text(app):
     await runtime.refresh_panel()
     from test_history import role_bodies
 
-    await click(app, "📖 Chat history")
+    await click(app, "📖 History")
     assert "Original prompt" in panel(transport).text
     bodies = []
     while True:
@@ -924,7 +924,7 @@ async def test_live_feedback_animates_public_summaries_without_raw_tool_or_parti
     )
     monkeypatch.setattr(presentation.time, "time", lambda: 110)
     await runtime.refresh_panel()
-    await click(app, "📖 Chat history")
+    await click(app, "📖 History")
     identity = runtime.store.get("panel_id")
     before = panel(transport).text
     labels = [button.text for row in panel(transport).reply_markup.inline_keyboard for button in row]
@@ -1138,7 +1138,7 @@ async def test_saved_agent_markdown_renders_in_the_actual_dialog_panel(app):
     assert "<b>Ready</b>" in rendered.text
     assert "• <code>core</code> — Agents &amp; state" in rendered.text
     assert "literal user input" not in rendered.text
-    await click(app, "📖 Chat history")
+    await click(app, "📖 History")
     assert "&lt;b&gt;literal user input&lt;/b&gt;" in panel(transport).text
     assert "**" not in rendered.text and "|" not in rendered.text
     assert engine.store.history(sid)[-1]["payload"]["text"] == raw
@@ -1253,7 +1253,7 @@ async def test_background_completion_does_not_mark_read_and_latest_acknowledges(
     first = engine.store.event(sid, "completed", {"status": "completed"})
     await runtime.refresh_panel()
     assert runtime.store.viewed(sid) == 0
-    await click(app, "📖 Chat history")
+    await click(app, "📖 History")
     assert runtime.store.viewed(sid) == first
     await click(app, "⬅️ Back")
     engine.store.event(sid, "user", {"text": "More work"})
@@ -1261,7 +1261,7 @@ async def test_background_completion_does_not_mark_read_and_latest_acknowledges(
     second = engine.store.event(sid, "completed", {"status": "completed"})
     await runtime.refresh_panel()
     assert runtime.store.viewed(sid) == first < second
-    await click(app, "📖 Chat history")
+    await click(app, "📖 History")
     await click(app, "⏮ Iteration")
     assert runtime.store.viewed(sid) == first
     await click(app, "Iteration ⏭")
@@ -1334,7 +1334,7 @@ async def test_new_completion_during_publication_stays_unread(app):
         return result
 
     transport.make_request = completing
-    await click(app, "📖 Chat history")
+    await click(app, "📖 History")
     assert later and runtime.store.viewed(sid) == first < later[0]
     await click(app, "🏠 Deck")
     assert "Unread: <b>1</b>" in panel(transport).text
@@ -1418,8 +1418,8 @@ async def test_exchange_and_text_pages_are_independent_and_pause_keeps_identity(
     await settle(engine)
     await runtime.refresh_panel()
     rows = [[b.text for b in row] for row in panel(transport).reply_markup.inline_keyboard]
-    assert rows == [["⚙️ Config", "ℹ️ Details"], ["📖 Chat history", "⏹ Stop"], ["⬅️ Back", "🏠 Deck"]]
-    await click(app, "📖 Chat history")
+    assert rows == [["⚙️ Config", "ℹ️ Details", "📖 History"], ["⏹ Stop"], ["⬅️ Back", "🏠 Deck"]]
+    await click(app, "📖 History")
     await click(app, "⏮ Iteration")
     view = json.loads(runtime.store.get("history_view"))
     anchor = view["anchor"]
@@ -1718,7 +1718,7 @@ async def test_registered_image_delivers_original_and_remains_browsable(app, tmp
     assert len(sends) == 1 and str(sends[0].document.path) == attachment["path"]
     await runtime.refresh_panel()
     assert not any("Images" in b.text for row in panel(transport).reply_markup.inline_keyboard for b in row)
-    await click(app, "📖 Chat history")
+    await click(app, "📖 History")
     assert isinstance(panel(transport).method, EditMessageMedia)
     assert str(panel(transport).method.media.media.path) == attachment["path"]
     assert len([call for call in transport.calls if isinstance(call, SendDocument)]) == 1

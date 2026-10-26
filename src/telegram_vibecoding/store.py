@@ -73,6 +73,14 @@ class BotStore(Database):
                 with self.db:
                     self.db.execute(f"ALTER TABLE {table} ADD COLUMN created REAL NOT NULL DEFAULT 0")
 
+        with self.db:
+            self.db.execute(
+                "UPDATE answer_parts AS a SET status='pending' WHERE a.status='cancelled' AND a.created>? "
+                "AND EXISTS (SELECT 1 FROM answer_parts AS b WHERE b.visit=a.visit AND b.event_id=a.event_id "
+                "AND b.status IN ('sent','sending'))",
+                (time.time() - 7 * 86400,),
+            )
+
     def get(self, key: str, default: str = "") -> str:
         row = self.one("SELECT value FROM meta WHERE key=?", (key,))
         return row["value"] if row else default
@@ -130,9 +138,19 @@ class BotStore(Database):
     def answer_visit(self, *, new: bool = False) -> str:
         visit = self.get("answer_visit")
         if new or not visit:
-            visit = identifier()
+            started = self.one(
+                "SELECT a.visit FROM answer_parts AS a WHERE a.session_id=? AND a.status IN ('pending','sending') "
+                "AND EXISTS (SELECT 1 FROM answer_parts AS b WHERE b.visit=a.visit AND b.event_id=a.event_id "
+                "AND b.status IN ('sent','sending')) ORDER BY a.created,a.event_id LIMIT 1",
+                (self.get("selected"),),
+            )
+            visit = started["visit"] if started else identifier()
             with self.db:
-                self.db.execute("UPDATE answer_parts SET status='cancelled' WHERE status='pending'")
+                self.db.execute(
+                    "UPDATE answer_parts AS a SET status='cancelled' WHERE a.status='pending' "
+                    "AND NOT EXISTS (SELECT 1 FROM answer_parts AS b WHERE b.visit=a.visit AND b.event_id=a.event_id "
+                    "AND b.status IN ('sent','sending'))"
+                )
                 self.set("answer_visit", visit)
         return visit
 

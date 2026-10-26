@@ -80,8 +80,9 @@ a manual Other location input action in this menu.
 
 The main session screen contains its title, a compact model/status line with
 reasoning effort in parentheses next to the model (for example,
-GPT-6.1-Sol (medium) · Working), and current agent output. It has exactly three normal control rows: Config and
-Details; Chat history and emergency Stop; Back and Deck. Config contains model,
+GPT-6.1-Sol (medium) · Working), and current agent output. Its first control row
+contains Config, Details and History. Emergency Stop has a separate full-width row only while work is active; finished sessions hide it.
+Back and Deck occupy the last row. Config contains model,
 reasoning and Plan controls. Do not put these controls, role tabs, Images or
 history pagination on the main screen. Long current answers are delivered in full as consecutive standalone messages;
 the controls remain in a separate compact panel below them. Native pending questions add
@@ -171,18 +172,20 @@ room below the 4096-unit Telegram limit. Preserve every text character and valid
 formatting; do not summarize or require the owner to use history for the rest.
 Short answers retain the existing single-panel presentation. Published answer
 messages have no controls and are never retired as UI panels. After full delivery,
-remove the duplicate compact preview and keep the normal three control rows in
+remove the duplicate compact preview and keep the session controls in
 the working panel below the answer. Keep errors and pending questions visible.
 
 Queue and acknowledge each part durably by view visit, event ID and part number.
 Refreshes and process restarts resume pending parts without repeating accepted
 ones. An explicit session selection replays its current long answer at the chat
-tail; returning from Config/history retains the same visit. Navigating away pauses
-delivery; opening a new visit cancels obsolete pending copies, preserving source
-history and already delivered messages. Follow-ups in the same session keep
-accepted answer parts and may continue the current iteration normally.
+tail; returning from Config/history retains the same visit. Before the first send
+starts, navigating away may cancel an unstarted copy. Once the first send starts, finish every part even after navigation or a process
+restart. Reopening a session with an unfinished started batch resumes its visit
+instead of duplicating it. Recover legacy cancelled tails of started batches
+within the seven-day retention window, preserving accepted parts and source
+history. Follow-ups in the same session keep accepted answer parts and may continue the current iteration normally.
 
-Only the selected main session dialog receives full-answer messages. Background
+Only the selected main session dialog starts new full-answer delivery batches. Background
 sessions retain short completion notices and publish full answers when opened;
 history remains a role-aware book. Answer parts are silent and disable previews.
 Keep the panel below each accepted part, including partial-delivery failure.

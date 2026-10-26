@@ -123,7 +123,7 @@ async def test_smooth_pages_cross_chapters_and_jumps_always_land_at_user(app):
         await settle(engine)
         native.finish(engine.store.session(sid)["thread_id"], text="Answer to " + text)
     await runtime.refresh_panel()
-    await click(app, "📖 Chat history")
+    await click(app, "📖 History")
     assert "Iteration two" in panel(transport).text and "Answer to Iteration two" in panel(transport).text
     await click(app, "◀ Page")
     assert "Answer to Iteration one" in panel(transport).text
@@ -152,7 +152,7 @@ async def test_history_screen_reads_all_roles_after_steering_and_returns_to_chap
     engine.store.event(sid, "message", {"text": "Complete answer " * 600})
     engine.store.event(sid, "completed", {"status": "completed"})
     await runtime.refresh_panel()
-    await click(app, "📖 Chat history")
+    await click(app, "📖 History")
     # An already-open legacy cursor into a steering message resolves to the whole iteration.
     runtime.store.set("history_anchor", str(steering))
     await runtime.refresh_panel()
@@ -202,7 +202,7 @@ async def test_images_are_page_scoped_and_disappear_on_the_next_text_page(app, t
     attachment = engine.attach(sid, {"path": str(image), "anchor": user})
     engine.store.event(sid, "message", {"text": "After the image " * 100})
     await runtime.refresh_panel()
-    await click(app, "📖 Chat history")
+    await click(app, "📖 History")
     await click(app, "Page ▶")
     media = panel(transport).method
     assert isinstance(media, EditMessageMedia) and str(media.media.media.path) == attachment["path"]
@@ -287,7 +287,7 @@ async def test_input_from_history_returns_to_session_dialog(app, finished, kind)
     if finished:
         native.finish(thread, text="Initial answer")
     await runtime.refresh_panel()
-    await click(app, "📖 Chat history")
+    await click(app, "📖 History")
     assert "Test (medium) ·" in panel(transport).text
 
     async def download(file_id, destination):
@@ -312,8 +312,8 @@ async def test_input_from_history_returns_to_session_dialog(app, finished, kind)
     assert runtime.store.get("screen") == "Screens:chat"
     assert runtime.store.get("selected") == sid
     rows = [[b.text for b in row] for row in panel(transport).reply_markup.inline_keyboard]
-    assert rows == [["⚙️ Config", "ℹ️ Details"], ["📖 Chat history", "⏹ Stop"], ["⬅️ Back", "🏠 Deck"]]
-    await click(app, "📖 Chat history")
+    assert rows == [["⚙️ Config", "ℹ️ Details", "📖 History"], ["⏹ Stop"], ["⬅️ Back", "🏠 Deck"]]
+    await click(app, "📖 History")
     assert f"Iteration {2 if finished else 1}/{2 if finished else 1}" in panel(transport).text
     assert engine.store.session(sid)["thread_id"] == thread
 
@@ -340,14 +340,14 @@ async def test_stop_ends_iteration_only_after_native_completion(app):
     await click(app, "⏹ Stop")
     await command(app, "While stopping")
     await settle(engine)
-    await click(app, "📖 Chat history")
+    await click(app, "📖 History")
     assert "Iteration 1/1" in panel(transport).text
     assert "Initial request" in panel(transport).text and "While stopping" in panel(transport).text
     native.finish(thread, "interrupted", "Stopped")
     await command(app, "Continue after stop")
     await settle(engine)
     assert runtime.store.get("screen") == "Screens:chat"
-    await click(app, "📖 Chat history")
+    await click(app, "📖 History")
     assert "Iteration 2/2" in panel(transport).text
     assert "Continue after stop" in panel(transport).text
     assert "Initial request" not in panel(transport).text.split("\n\n", 1)[1]
@@ -387,7 +387,7 @@ async def test_active_session_completion_is_silent_and_remains_in_history(app, h
     await command(app, "Follow-up")
     await settle(engine)
     if history:
-        await click(app, "📖 Chat history")
+        await click(app, "📖 History")
     native.finish(thread, text="Final result")
     terminal = next(e for e in reversed(engine.store.events(0)) if e["kind"] == "completed")
     runtime.queue_update(terminal)
@@ -401,7 +401,7 @@ async def test_active_session_completion_is_silent_and_remains_in_history(app, h
     assert "Final result" in panel(transport).text
     assert runtime.store.viewed(sid) == 0
     if not history:
-        await click(app, "📖 Chat history")
+        await click(app, "📖 History")
     for text in [
         "Initial task",
         "Progress before follow-up",
@@ -475,7 +475,7 @@ async def test_async_question_has_waiting_state_options_history_and_normal_reply
     current = panel(transport)
     assert "Waiting for your answer" in current.text and "Where?" in current.text
     assert "Here" in [b.text for row in current.reply_markup.inline_keyboard for b in row]
-    await click(app, "📖 Chat history")
+    await click(app, "📖 History")
     assert "Codex · Question" in panel(transport).text and "Where?" in panel(transport).text
     await click(app, "⬅️ Back")
     if button:

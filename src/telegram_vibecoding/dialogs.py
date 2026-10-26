@@ -866,11 +866,9 @@ def make_dialog() -> Dialog:
             Row(
                 Button(Const("⚙️ Config"), id="config", on_click=config),
                 Button(Const("ℹ️ Details"), id="details", on_click=details),
+                Button(Const("📖 History"), id="history", on_click=open_history),
             ),
-            Row(
-                Button(Const("📖 Chat history"), id="history", on_click=open_history),
-                Button(Const("⏹ Stop"), id="stop", on_click=stop),
-            ),
+            Row(Button(Const("⏹ Stop"), id="stop", on_click=stop), when="can_stop"),
             Select(
                 Format("{item[0]}"),
                 id="answer",
