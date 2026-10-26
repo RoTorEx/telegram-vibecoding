@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.25] - 2026-10-26
+
 - Restrict consecutive messages to the currently opened answer; never drain older partial answers after a newer result or while reading History. Resume unfinished delivery only for a matching current session and answer, and finish startup output before answer publication.
 
 ## [0.1.24] - 2026-10-26
