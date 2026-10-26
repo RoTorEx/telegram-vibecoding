@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from aiogram.exceptions import TelegramNetworkError
 from aiogram.methods import SendMessage
@@ -81,7 +83,6 @@ async def test_partial_delivery_resumes_after_restart_without_repeating_accepted
         await runtime.deliver_answers()
     assert len(answer_messages(transport)) == 1
     transport.make_request = original
-    await click(app, "🏠 Deck")
     replacement = BotRuntime(runtime.settings, bot=runtime.bot, engine=runtime.engine)
     replacement.throttle = runtime.throttle
     replacement.pacer.interval = 0
@@ -161,7 +162,7 @@ async def test_new_completion_during_full_answer_publication_stays_unread(app):
 
 
 @pytest.mark.parametrize("same_session", [False, True])
-async def test_navigation_during_first_send_finishes_whole_answer(app, same_session):
+async def test_navigation_during_first_send_pauses_until_matching_answer_is_opened(app, same_session):
     runtime, transport, engine, native = app
     sid, answer = await completed_answer(app)
     await runtime.refresh_panel()
@@ -183,26 +184,27 @@ async def test_navigation_during_first_send_finishes_whole_answer(app, same_sess
 
     transport.make_request = navigate
     await runtime.deliver_answers()
+    assert switched and len(answer_messages(transport)) == 1
     await runtime.deliver_answers()
+    if not same_session:
+        assert len(answer_messages(transport)) == 1
+        assert runtime.store.get("selected") == other
+        runtime.store.set("selected", sid)
+        runtime.store.answer_visit(new=True)
+        await runtime.refresh_panel()
+        await runtime.deliver_answers()
     messages = answer_messages(transport)
-    assert switched and len(messages) > 2
+    assert len(messages) > 2
     assert sum(" · <i>Answer 1/" in m.text for m in messages) == 1
     assert (
         "".join(CheckedHTML(m.text.split("\n\n", 1)[1]).text for m in messages)
         == CheckedHTML(render_markdown(answer)).text
     )
-    assert all(r["status"] == "sent" for r in runtime.store.rows("SELECT * FROM answer_parts"))
+    assert runtime.store.get("answer_visit") == visit
     assert runtime.store.viewed(sid) == 0
-    if same_session:
-        assert runtime.store.get("answer_visit") == visit
-    else:
-        assert runtime.store.get("selected") == other
-    assert int(runtime.store.get("panel_id")) > max(
-        r["telegram_id"] for r in runtime.store.rows("SELECT * FROM answer_parts")
-    )
 
 
-async def test_restart_recovers_legacy_cancelled_tail(app):
+async def test_legacy_recovery_requires_opening_the_same_current_answer(app):
     runtime, transport, engine, native = app
     sid, answer = await completed_answer(app)
     await runtime.refresh_panel()
@@ -230,6 +232,12 @@ async def test_restart_recovers_legacy_cancelled_tail(app):
     replacement.throttle = runtime.throttle
     replacement.pacer.interval = 0
     try:
+        await replacement.deliver_answers()
+        assert len(answer_messages(transport)) == 1
+        assert replacement.store.one("SELECT 1 FROM answer_parts WHERE status='cancelled'")
+        await click(app, "📍 Location")
+        await click(app, "1")
+        await click(app, "1")
         await replacement.deliver_answers()
         messages = answer_messages(transport)
         assert sum(" · <i>Answer 1/" in m.text for m in messages) == 1
@@ -261,3 +269,69 @@ async def test_stop_row_tracks_work_lifecycle(app):
     native.finish(engine.store.session(sid)["thread_id"], text="Done")
     await runtime.refresh_panel()
     assert rows() == idle
+
+
+@pytest.mark.parametrize("long_latest", [False, True])
+@pytest.mark.parametrize("legacy_cancelled", [False, True])
+async def test_journal_opens_only_latest_answer_without_draining_older_tail(
+    app, long_latest, legacy_cancelled
+):
+    runtime, transport, engine, native = app
+    sid, old_answer = await completed_answer(app)
+    await runtime.refresh_panel()
+    old_visit = runtime.store.get("answer_visit")
+    original = transport.make_request
+
+    async def fail_second(bot, method, timeout=None):
+        if isinstance(method, SendMessage) and " · <i>Answer 2/" in method.text:
+            raise TelegramNetworkError(method=method, message="Offline")
+        return await original(bot, method, timeout)
+
+    transport.make_request = fail_second
+    with pytest.raises(TelegramNetworkError):
+        await runtime.deliver_answers()
+    transport.make_request = original
+    if legacy_cancelled:
+        with runtime.store.db:
+            runtime.store.db.execute("UPDATE answer_parts SET status='cancelled' WHERE status!='sent'")
+    await click(app, "🏠 Deck")
+    latest = "Latest economics result.\n" * (500 if long_latest else 1)
+    engine.store.event(sid, "user", {"text": "Now compare ownership costs"})
+    event_id = engine.store.event(sid, "message", {"phase": "final_answer", "text": latest})
+    completion = engine.store.event(sid, "completed", {"status": "completed"})
+    await runtime.refresh_panel()
+    await click(app, "📒 Journal (1)")
+    await click(app, "1")
+    replacement = BotRuntime(runtime.settings, bot=runtime.bot, engine=runtime.engine)
+    replacement.throttle = runtime.throttle
+    replacement.pacer.interval = 0
+    try:
+        await replacement.refresh_panel()
+        await replacement.deliver_answers()
+        await replacement.deliver_answers()
+        published = answer_messages(transport)[1:]
+        if long_latest:
+            assert len(published) > 1
+            assert (
+                "".join(CheckedHTML(m.text.split("\n\n", 1)[1]).text for m in published)
+                == CheckedHTML(render_markdown(latest)).text
+            )
+            assert replacement.store.viewed(sid) == completion
+            assert set(json.loads(replacement.store.get("answer_events"))) == {event_id}
+        else:
+            assert not published
+            assert "Latest economics result" in panel(transport).text
+        assert (
+            replacement.store.one(
+                "SELECT COUNT(*) AS n FROM answer_parts WHERE visit=? AND status='sent'", (old_visit,)
+            )["n"]
+            == 1
+        )
+        await click(app, "📖 History")
+        await click(app, "⏮ Iteration")
+        assert "Complete" in panel(transport).text
+        before = len(answer_messages(transport))
+        await replacement.deliver_answers()
+        assert len(answer_messages(transport)) == before
+    finally:
+        replacement.store.close()

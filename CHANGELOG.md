@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Restrict consecutive messages to the currently opened answer; never drain older partial answers after a newer result or while reading History. Resume unfinished delivery only for a matching current session and answer, and finish startup output before answer publication.
+
 ## [0.1.24] - 2026-10-26
 
 - Apply one conservative chat-wide budget to sends, edits and cleanup, persist Telegram flood-wait deadlines, and keep polling/readiness independent of delayed startup output. Retain input and answer queues until Telegram permits writes again.

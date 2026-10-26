@@ -206,6 +206,7 @@ class BotRuntime:
         self.send_lock = asyncio.Lock()
         self.ui_lock = asyncio.Lock()
         self.stop_event = asyncio.Event()
+        self.startup_done = asyncio.Event()
         self._setup()
 
     def _setup(self):
@@ -415,6 +416,7 @@ class BotRuntime:
 
     async def startup_loop(self) -> None:
         await self.startup_ready()
+        self.startup_done.set()
         await self.stop_event.wait()
 
     async def startup_ready(self) -> None:
@@ -1034,28 +1036,26 @@ class BotRuntime:
             await self.refresh_panel()
 
     async def deliver_answers(self):
-        active = self.store.get("screen") == Screens.chat.state
+        if self.store.get("screen") != Screens.chat.state:
+            return
         sid, visit = self.store.get("selected"), self.store.get("answer_visit")
+        events = self.store.get("answer_events", "[]")
         rows = self.store.rows(
-            "SELECT a.* FROM answer_parts AS a WHERE a.status IN ('pending','sending') AND ("
-            "EXISTS (SELECT 1 FROM answer_parts AS b WHERE b.visit=a.visit AND b.event_id=a.event_id "
-            "AND b.status IN ('sent','sending')) OR (? AND a.visit=? AND a.session_id=?)) "
-            "ORDER BY a.created,a.event_id,a.visit,a.part",
-            (active, visit, sid),
+            "SELECT * FROM answer_parts WHERE visit=? AND session_id=? "
+            "AND event_id IN (SELECT value FROM json_each(?)) "
+            "AND status IN ('pending','sending') ORDER BY event_id,part",
+            (visit, sid, events),
         )
         published = False
         try:
             for row in rows:
                 async with self.send_lock:
                     await self.throttle()
-                    started = self.store.one(
-                        "SELECT 1 FROM answer_parts WHERE visit=? AND event_id=? AND status IN ('sent','sending') LIMIT 1",
-                        (row["visit"], row["event_id"]),
-                    )
-                    if not started and (
+                    if (
                         self.store.get("screen") != Screens.chat.state
                         or self.store.get("selected") != row["session_id"]
                         or self.store.get("answer_visit") != row["visit"]
+                        or row["event_id"] not in json.loads(self.store.get("answer_events", "[]"))
                     ):
                         continue
                     with self.store.db:
@@ -1079,12 +1079,14 @@ class BotRuntime:
                     published = True
             sid, visit = self.store.get("selected"), self.store.get("answer_visit")
             if self.store.get("screen") == Screens.chat.state and not self.store.one(
-                "SELECT 1 FROM answer_parts WHERE visit=? AND status IN ('pending','sending') LIMIT 1",
-                (visit,),
+                "SELECT 1 FROM answer_parts WHERE visit=? AND event_id IN (SELECT value FROM json_each(?)) "
+                "AND status IN ('pending','sending') LIMIT 1",
+                (visit, self.store.get("answer_events", "[]")),
             ):
                 receipt = self.store.one(
-                    "SELECT MAX(completion_id) AS completion FROM answer_parts WHERE visit=? AND session_id=? AND status='sent'",
-                    (visit, sid),
+                    "SELECT MAX(completion_id) AS completion FROM answer_parts WHERE visit=? AND session_id=? "
+                    "AND event_id IN (SELECT value FROM json_each(?)) AND status='sent'",
+                    (visit, sid, self.store.get("answer_events", "[]")),
                 )
                 if receipt and receipt["completion"]:
                     self.store.mark_viewed(sid, receipt["completion"])
@@ -1124,6 +1126,7 @@ class BotRuntime:
             after = events[-1]["id"]
 
     async def delivery_loop(self):
+        await self.startup_done.wait()
         while not self.stop_event.is_set():
             try:
                 await self.deliver_notifications()

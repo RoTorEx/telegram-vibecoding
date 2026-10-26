@@ -258,6 +258,7 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
         }
         parts = conversation_parts(output, live, rich=True, view=content, compact=True)
         attachments: list[dict] = []
+        answers: list[dict] = []
         if screen == Screens.chat and len(parts) > 1:
             answers = [
                 e
@@ -283,6 +284,8 @@ async def data(dialog_manager: DialogManager, **_) -> dict:
                 )
             ):
                 parts = [""]
+        if screen == Screens.chat:
+            app.store.set("answer_events", json.dumps([e["id"] for e in answers]))
         if screen == Screens.history:
             if live:
                 conversation = {

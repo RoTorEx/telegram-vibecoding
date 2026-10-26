@@ -182,14 +182,22 @@ remove the duplicate compact preview and keep the session controls in
 the working panel below the answer. Keep errors and pending questions visible.
 
 Queue and acknowledge each part durably by view visit, event ID and part number.
-Refreshes and process restarts resume pending parts without repeating accepted
-ones. An explicit session selection replays its current long answer at the chat
-tail; returning from Config/history retains the same visit. Before the first send
-starts, navigating away may cancel an unstarted copy. Once the first send starts, finish every part even after navigation or a process
-restart. Reopening a session with an unfinished started batch resumes its visit
-instead of duplicating it. Recover legacy cancelled tails of started batches
-within the seven-day retention window, preserving accepted parts and source
-history. Follow-ups in the same session keep accepted answer parts and may continue the current iteration normally.
+Only the final messages belonging to the current answer in the selected session
+are eligible for delivery. Refresh that selection before draining after startup.
+Never drain an old session/answer tail globally, restore cancelled history on
+startup, or publish older answers after a newer result. Journal opens the current
+answer; previous iterations are available only through History's pages and
+iteration jumps.
+
+Navigating away pauses an incomplete answer without losing its source or
+accepted parts. Reopening that same current answer resumes its own batch without
+repeating its accepted prefix. A newer answer supersedes the old delivery; its
+unfinished parts stay local and must not appear below the new answer. Starting a
+new view must resolve the current answer before adopting an unfinished batch,
+matching both session and event ID. A fully delivered current answer can be
+replayed on explicit session selection. Config/history preserve the visit but
+history reading never drains the multi-message delivery queue. Publish the boot
+notice before enabling answer delivery so it cannot split an answer's parts.
 
 Only the selected main session dialog starts new full-answer delivery batches. Background
 sessions retain short completion notices and publish full answers when opened;
