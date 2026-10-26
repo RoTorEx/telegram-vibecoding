@@ -298,6 +298,7 @@ class BotRuntime:
         self.startup_done = asyncio.Event()
         self.intake_ready = asyncio.Event()
         self.callback_ready = asyncio.Event()
+        self.service_ready = asyncio.Event()
         self.callbacks: dict[str, float] = {}
         self.input_tasks: dict[str, asyncio.Task] = {}
         self.last_interaction = 0.0
@@ -311,10 +312,9 @@ class BotRuntime:
             command = (message.text or "").split()[0].split("@")[0]
             if command == "/auth":
                 if self.confirmations:
-                    await self.bot.send_message(
-                        self.settings.allowed_user_id,
+                    await self.send(
                         "Enroll this phone using a one-time code obtained through SSH. Never send that code in Telegram.",
-                        reply_markup=self.confirmation_markup(),
+                        markup=self.confirmation_markup(),
                     )
                 else:
                     await self.send("Device confirmation is not configured on this server.")
@@ -457,19 +457,53 @@ class BotRuntime:
                     ]
                 ]
             )
-        last = None
-        async with self.send_lock:
+        with self.store.db:
             for part in split_text(text):
-                while True:
-                    await self.throttle()
-                    try:
-                        last = await self.bot.send_message(
-                            self.settings.allowed_user_id, part, reply_markup=markup, parse_mode=None
+                self.store.db.execute(
+                    "INSERT INTO service_messages(body,markup,created) VALUES(?,?,?)",
+                    (part, markup.model_dump_json(exclude_none=True, exclude_unset=True), time.time()),
+                )
+        self.service_ready.set()
+
+    async def deliver_service_messages(self):
+        published = False
+        try:
+            for row in self.store.rows(
+                "SELECT * FROM service_messages WHERE status='pending' ORDER BY id LIMIT 10"
+            ):
+                async with self.send_lock:
+                    sent = await self.bot.send_message(
+                        self.settings.allowed_user_id,
+                        row["body"],
+                        reply_markup=InlineKeyboardMarkup.model_validate_json(row["markup"]),
+                        parse_mode=None,
+                    )
+                    with self.store.db:
+                        self.store.db.execute(
+                            "UPDATE service_messages SET status='sent',telegram_id=? WHERE id=?",
+                            (sent.message_id, row["id"]),
                         )
-                        break
-                    except TelegramRetryAfter as exc:
-                        await asyncio.sleep(exc.retry_after)
-        return last
+                        self.store.set("last_notice_message_id", str(sent.message_id))
+                    published = True
+        finally:
+            if published:
+                await self.refresh_panel()
+
+    async def service_loop(self):
+        await self.startup_done.wait()
+        while not self.stop_event.is_set():
+            self.service_ready.clear()
+            try:
+                await self.deliver_service_messages()
+            except TelegramRetryAfter as exc:
+                await asyncio.sleep(exc.retry_after)
+            except Exception as exc:
+                log.warning("Service message retained: %s", type(exc).__name__)
+                await asyncio.sleep(1)
+            try:
+                await asyncio.wait_for(self.service_ready.wait(), timeout=0.25)
+            except TimeoutError:
+                pass
 
     def panel_published(self, text: str | None) -> None:
         if self.read_requested and self.view_receipt and self.receipt_text == text:
@@ -481,29 +515,29 @@ class BotRuntime:
             self.restart_pending = False
 
     async def startup_panel(self) -> None:
-        async with self.ui_lock:
-            self.restart_pending = self.store.get("restart_panel") != self.instance
-            if self.store.get("restart_sent") != self.instance:
-                from telegram_vibecoding import __version__
-                from telegram_vibecoding.presentation import timestamp
+        self.restart_pending = self.store.get("restart_panel") != self.instance
+        if self.store.get("restart_sent") != self.instance:
+            from telegram_vibecoding import __version__
+            from telegram_vibecoding.presentation import timestamp
 
-                health = await self.engine.call("/health")
-                text = (
-                    f"🟢 {BOT_NAME} is online\n\n"
-                    f"Bot: {__version__}\nCore: {health['version']}\nHost: {health['host_id']}\n"
-                    f"Started: {timestamp(time.time())}"
+            health = await self.engine.call("/health")
+            text = (
+                f"🟢 {BOT_NAME} is online\n\n"
+                f"Bot: {__version__}\nCore: {health['version']}\nHost: {health['host_id']}\n"
+                f"Started: {timestamp(time.time())}"
+            )
+            async with self.send_lock:
+                await self.throttle()
+                sent = await self.bot.send_message(
+                    self.settings.allowed_user_id, text, parse_mode=None, disable_notification=False
                 )
-                async with self.send_lock:
-                    await self.throttle()
-                    sent = await self.bot.send_message(
-                        self.settings.allowed_user_id, text, parse_mode=None, disable_notification=False
-                    )
-                    # Acknowledge the standalone send before refreshing the replaceable panel.
-                    self.store.set("restart_notice_id", str(sent.message_id))
-                    self.store.set("restart_notice_text", text)
-                    self.store.set("last_notice_message_id", str(sent.message_id))
-                    self.store.set("restart_sent", self.instance)
-                    log.info("Startup notification accepted: message=%s", sent.message_id)
+                # Acknowledge the standalone send before refreshing the replaceable panel.
+                self.store.set("restart_notice_id", str(sent.message_id))
+                self.store.set("restart_notice_text", text)
+                self.store.set("last_notice_message_id", str(sent.message_id))
+                self.store.set("restart_sent", self.instance)
+                log.info("Startup notification accepted: message=%s", sent.message_id)
+        async with self.ui_lock:
             if self.store.get("screen"):
                 await self.render_panel()
             else:
@@ -1404,6 +1438,7 @@ class BotRuntime:
             self.store.receive(update.update_id, body)
             if callback := body.get("callback_query"):
                 self.callbacks[callback["id"]] = time.monotonic()
+                self.pacer.reserved_callbacks.add(callback["id"])
                 self.callback_ready.set()
             self.last_interaction = time.monotonic()
             self.intake_ready.set()
@@ -1417,6 +1452,7 @@ class BotRuntime:
             while self.callbacks:
                 cid = next(iter(self.callbacks))
                 self.callbacks.pop(cid)
+                self.pacer.reserved_callbacks.discard(cid)
                 try:
                     await self.bot.answer_callback_query(cid, request_timeout=2)
                 except TelegramAPIError as exc:
@@ -1701,6 +1737,7 @@ class BotRuntime:
                 self.acknowledge_loop,
                 self.navigation_loop,
                 self.panel_loop,
+                self.service_loop,
                 self.startup_loop,
                 self.inbox_loop,
                 self.events_loop,

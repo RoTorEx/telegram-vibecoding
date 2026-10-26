@@ -23,6 +23,7 @@ class ChatPacer(BaseRequestMiddleware):
         # One private-chat write per second, shared by sends, edits and deletes.
         self.interval = 1.05
         self.acknowledged: dict[str, None] = {}
+        self.reserved_callbacks: set[str] = set()
         self.last_write = 0.0
         self.lock = asyncio.Lock()
 
@@ -38,16 +39,12 @@ class ChatPacer(BaseRequestMiddleware):
     ) -> Response[TelegramType]:
         if isinstance(method, AnswerCallbackQuery):
             cid = method.callback_query_id
-            if cid in self.acknowledged:
+            if cid in self.acknowledged or cid in self.reserved_callbacks:
                 return cast(Response[TelegramType], True)
             self.acknowledged[cid] = None
             if len(self.acknowledged) > 512:
                 self.acknowledged.pop(next(iter(self.acknowledged)))
-            try:
-                return await make_request(bot, cast(TelegramMethod[TelegramType], method))
-            except BaseException:
-                self.acknowledged.pop(cid, None)
-                raise
+            return await make_request(bot, cast(TelegramMethod[TelegramType], method))
         if getattr(method, "chat_id", None) != self.owner or method.__api_method__.startswith("get"):
             return await make_request(bot, method)
         async with self.lock:

@@ -114,7 +114,13 @@ def inline_panels_for_functional_tests(request, monkeypatch):
     """
     if request.node.get_closest_marker("async_transport"):
         return
-    from telegram_vibecoding.bot import PanelMessages
+    from telegram_vibecoding.bot import BotRuntime, PanelMessages
+
+    queued_send = BotRuntime.send
+
+    async def inline_send(self, text, markup=None):
+        await queued_send(self, text, markup)
+        await self.deliver_service_messages()
 
     async def inline(self, bot, new_message, old_message):
         rows = self.app.store.rows("SELECT id FROM outbox WHERE status='pending'")
@@ -128,3 +134,4 @@ def inline_panels_for_functional_tests(request, monkeypatch):
         return sent
 
     monkeypatch.setattr(PanelMessages, "show_message", inline)
+    monkeypatch.setattr(BotRuntime, "send", inline_send)

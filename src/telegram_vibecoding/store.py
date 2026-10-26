@@ -56,6 +56,9 @@ class BotStore(Database):
                 status TEXT NOT NULL DEFAULT 'pending', telegram_id INTEGER,
                 completion_id INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY(visit,event_id,part));
+            CREATE TABLE IF NOT EXISTS service_messages(
+                id INTEGER PRIMARY KEY AUTOINCREMENT, body TEXT NOT NULL, markup TEXT,
+                created REAL NOT NULL, status TEXT NOT NULL DEFAULT 'pending', telegram_id INTEGER);
             CREATE TABLE IF NOT EXISTS session_reads(
                 session_id TEXT PRIMARY KEY, completion_id INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
@@ -67,6 +70,7 @@ class BotStore(Database):
                 id INTEGER PRIMARY KEY AUTOINCREMENT, event_id INTEGER NOT NULL,
                 part INTEGER NOT NULL, body TEXT NOT NULL, markup TEXT, status TEXT NOT NULL DEFAULT 'pending',
                 telegram_id INTEGER, UNIQUE(event_id,part));
+            CREATE INDEX IF NOT EXISTS inbox_status_id ON inbox(status,id);
         """)
         for table in ("outbox", "notifications"):
             if "created" not in {r[1] for r in self.db.execute(f"PRAGMA table_info({table})")}:
@@ -213,7 +217,8 @@ class BotStore(Database):
             outbox = self.db.execute("DELETE FROM outbox WHERE created<=?", (cutoff,)).rowcount
             notices = self.db.execute("DELETE FROM notifications WHERE created<=?", (cutoff,)).rowcount
             answers = self.db.execute("DELETE FROM answer_parts WHERE created<=?", (cutoff,)).rowcount
-        if inbox or outbox or notices or answers:
+            services = self.db.execute("DELETE FROM service_messages WHERE created<=?", (cutoff,)).rowcount
+        if inbox or outbox or notices or answers or services:
             self.db.execute("VACUUM")
             self.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         return {"inbox": inbox, "outbox": outbox, "notifications": notices, "answer_parts": answers}

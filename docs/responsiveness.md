@@ -35,7 +35,10 @@ guarantees.
    snapshot's explicit-view receipt.
 5. At most four input targets run concurrently, ordered within each target.
    Authorized Stop/Archive cancels local transfer/queue work before native Stop.
-6. Durable answers, notices and cleanup retain their existing retry/no-replay
+6. Service replies (/auth and errors) are durably queued separately from navigation;
+   flood waits and failed service sends cannot stop following controls. Successful
+   sends are acknowledged once and local copies expire after seven days.
+7. Durable answers, notices and cleanup retain their existing retry/no-replay
    behavior. All chat writes share the 1.05-second budget and persisted flood wait.
    Callback acknowledgements and Core requests do not consume that write budget.
 
@@ -65,3 +68,13 @@ wait, network connectivity, or a slow Core/host operation. Background previews
 are expendable; captured input, final answers and explicit actions are not.
 
 Telegram guidance: https://core.telegram.org/bots/faq#my-bot-is-hitting-limits-how-do-i-avoid-this
+
+## Rollback compatibility
+
+The database additions are additive and captured input is retained. Versions up
+to 0.1.25 do not consume the new `received` status; 0.1.26 consumes it but does not
+send the new service-message queue. A fallback to such a version can report
+healthy while leaving these rows retained. Prefer restoring a corrected current
+frontend to drain them. Do not discard those rows, rewind the Telegram offset,
+reset either database, or restart Core to repair frontend delivery. Native thread
+identity and Core execution are independent of this queue format.

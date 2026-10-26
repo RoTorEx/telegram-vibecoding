@@ -185,6 +185,9 @@ finishing a transfer cannot start a new turn after Stop. Cancellation runs insid
 the device authorization boundary and retains captured input for normal retention.
 Independent polling, navigation, callback, panel, input and delivery tasks are
 cancelled/reaped on shutdown; bot updates preserve Core/native session identity.
+Service replies, including /auth and error messages, use a durable independent
+queue as well; no service handler waits for Telegram while holding UI state.
+Known successful replies are not repeated and local copies expire after seven days.
 Startup output and readiness remain independent of outgoing cooldowns.
 
 Tests with the production queue and pacing verify slow-HTTP isolation, callback

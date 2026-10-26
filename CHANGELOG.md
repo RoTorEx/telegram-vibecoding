@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Queue service replies, including /auth and error notices, independently of navigation so a Telegram flood wait cannot block later controls. Retain unsent replies across restart and expire local service copies with the seven-day retention policy.
+- Keep startup notification HTTP outside the UI lock and reserve callback acknowledgements for the independent worker so SDK handlers cannot delay navigation with another network acknowledgement.
+
 ## [0.1.26] - 2026-10-26
 
 - Decouple durable Telegram intake, callback acknowledgements, ordered navigation and panel publication. Coalesce stale previews, skip unchanged panels, prioritize foreground interaction, and preserve input targets, read receipts and outbox acknowledgements across retries.

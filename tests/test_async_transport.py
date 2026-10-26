@@ -373,3 +373,97 @@ async def test_publisher_chooses_latest_view_after_waiting_for_another_writer(as
     writes = [c for c in transport.calls if isinstance(c, (SendMessage, EditMessageText))]
     assert len(writes) == 1
     assert "Latest view" in writes[0].text
+
+
+async def test_auth_service_reply_cannot_block_navigation_during_flood_wait(async_app):
+    runtime, transport, engine, native = async_app
+    await runtime.initialize_panel()
+    runtime.store.set("telegram_retry_until", str(time.time() + 3600))
+    await runtime.receive_update(Update.model_validate(update(12000, "/auth")))
+    await runtime.receive_update(callback(12001))
+    async with asyncio.timeout(0.2):
+        await runtime.navigation_tick()
+    assert runtime.store.one("SELECT status FROM inbox WHERE id=12000")["status"] == "done"
+    assert runtime.store.one("SELECT status FROM inbox WHERE id=12001")["status"] == "done"
+    assert runtime.store.one("SELECT status FROM service_messages")["status"] == "pending"
+    with pytest.raises(TelegramRetryAfter):
+        await runtime.deliver_service_messages()
+    assert not any(isinstance(c, SendMessage) for c in transport.calls)
+
+
+async def test_service_reply_survives_restart_and_failed_delivery_without_repeating_success(async_app):
+    runtime, transport, engine, native = async_app
+    await runtime.send("Service reply")
+    replacement = BotRuntime(runtime.settings, bot=runtime.bot, engine=runtime.engine)
+    original = transport.make_request
+
+    async def fail(bot, method, timeout=None):
+        if isinstance(method, SendMessage):
+            raise TelegramNetworkError(method=method, message="offline")
+        return await original(bot, method, timeout)
+
+    try:
+        transport.make_request = fail
+        with pytest.raises(TelegramNetworkError):
+            await replacement.deliver_service_messages()
+        assert replacement.store.one("SELECT status FROM service_messages")["status"] == "pending"
+        transport.make_request = original
+        await replacement.deliver_service_messages()
+        before = len([c for c in transport.calls if isinstance(c, SendMessage)])
+        await replacement.deliver_service_messages()
+        assert before == 1
+        assert len([c for c in transport.calls if isinstance(c, SendMessage)]) == before
+        assert replacement.store.one("SELECT status FROM service_messages")["status"] == "sent"
+    finally:
+        replacement.store.close()
+
+
+async def test_stalled_startup_notice_does_not_hold_navigation_state(async_app):
+    runtime, transport, engine, native = async_app
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = transport.make_request
+
+    async def delayed(bot, method, timeout=None):
+        if isinstance(method, SendMessage):
+            entered.set()
+            await release.wait()
+        return await original(bot, method, timeout)
+
+    transport.make_request = delayed
+    startup = asyncio.create_task(runtime.startup_panel())
+    try:
+        await entered.wait()
+        await runtime.receive_update(callback(13000))
+        async with asyncio.timeout(0.2):
+            await runtime.navigation_tick()
+        assert runtime.store.get("screen") == Screens.deck.state
+        release.set()
+        await startup
+    finally:
+        startup.cancel()
+        await asyncio.gather(startup, return_exceptions=True)
+
+
+async def test_failed_callback_ack_is_best_effort_and_cannot_poison_controls(async_app):
+    from aiogram.exceptions import TelegramBadRequest
+
+    runtime, transport, engine, native = async_app
+    original = transport.make_request
+    attempts = []
+
+    async def expired(bot, method, timeout=None):
+        if isinstance(method, AnswerCallbackQuery):
+            attempts.append(method.callback_query_id)
+            raise TelegramBadRequest(method=method, message="query is too old and response timeout expired")
+        return await original(bot, method, timeout)
+
+    transport.make_request = expired
+    await runtime.receive_update(callback(14000))
+    await runtime.receive_update(Update.model_validate(update(14001, "/menu")))
+    async with workers(runtime.acknowledge_loop, runtime.navigation_loop):
+        await eventually(
+            lambda: runtime.store.one("SELECT status FROM inbox WHERE id=14001")["status"] == "done"
+        )
+        await eventually(lambda: bool(attempts))
+    assert attempts == ["cb-14000"]
+    assert runtime.store.get("screen") == Screens.deck.state
