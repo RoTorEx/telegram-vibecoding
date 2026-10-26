@@ -1498,6 +1498,7 @@ async def test_typed_telegram_callback_preview_does_not_block_following_commands
         },
     }
     await runtime.receive_update(Update.model_validate(raw))
+    await runtime.navigation_tick()
     row = runtime.store.one("SELECT * FROM inbox WHERE id=?", (uid,))
     import json
 
@@ -1508,6 +1509,7 @@ async def test_typed_telegram_callback_preview_does_not_block_following_commands
     for command_text in ["/start", "/menu", "/stop"]:
         uid += 1
         await runtime.receive_update(Update.model_validate(update(uid, command_text)))
+        await runtime.navigation_tick()
         assert runtime.store.one("SELECT status FROM inbox WHERE id=?", (uid,))["status"] == "done"
     assert float(runtime.store.get("poll_heartbeat")) > time.time() - 10
     assert not any(method in {"thread/start", "turn/start", "turn/steer"} for method, _ in native.calls)
@@ -1538,6 +1540,7 @@ async def test_reply_with_preview_and_media_is_durably_captured(app):
             "link_preview_options": {"is_disabled": True},
         }
         await runtime.receive_update(Update.model_validate(body))
+        await runtime.navigation_tick()
         captured = json.loads(runtime.store.one("SELECT body FROM inbox WHERE id=?", (i,))["body"])
         assert captured["message"]["reply_to_message"]["link_preview_options"] == {"is_disabled": True}
         for key in extra:
@@ -1576,9 +1579,11 @@ async def test_expired_callback_acknowledgement_does_not_poison_control_queue(ap
         },
     }
     await runtime.receive_update(Update.model_validate(body))
+    await runtime.navigation_tick()
     assert runtime.store.one("SELECT status FROM inbox WHERE id=?", (uid,))["status"] == "done"
     transport.make_request = original
     await runtime.receive_update(Update.model_validate(update(uid + 1, "/start")))
+    await runtime.navigation_tick()
     assert "Main Deck" in panel(transport).text
 
 

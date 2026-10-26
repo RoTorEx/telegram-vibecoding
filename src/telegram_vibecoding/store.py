@@ -84,16 +84,26 @@ class BotStore(Database):
                 (key, value),
             )
 
+    def advance_offset(self, update_id: int) -> None:
+        self.set("offset", str(max(int(self.get("offset", "0")), update_id + 1)))
+
+    def receive(self, update_id: int, body: dict) -> None:
+        with self.db:
+            self.db.execute(
+                "INSERT OR IGNORE INTO inbox(id,body,mode,status,created) VALUES(?,?,'received','received',?)",
+                (update_id, json.dumps(body), time.time()),
+            )
+            self.advance_offset(update_id)
+
     def accept(self, update_id: int, body: dict, sid: str | None, mode: str) -> bool:
         with self.db:
             cur = self.db.execute(
-                "INSERT OR IGNORE INTO inbox(id,body,session_id,mode,created) VALUES(?,?,?,?,?)",
+                "INSERT INTO inbox(id,body,session_id,mode,created) VALUES(?,?,?,?,?) "
+                "ON CONFLICT(id) DO UPDATE SET body=excluded.body,session_id=excluded.session_id,"
+                "mode=excluded.mode,status='pending' WHERE inbox.status='received'",
                 (update_id, json.dumps(body), sid, mode, time.time()),
             )
-            self.db.execute(
-                "INSERT INTO meta VALUES('offset',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (str(update_id + 1),),
-            )
+            self.advance_offset(update_id)
         return cur.rowcount == 1
 
     def processed(self, update_id: int) -> None:

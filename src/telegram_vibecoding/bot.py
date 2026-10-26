@@ -32,6 +32,7 @@ from aiogram.types import (
     BotCommand,
     BotCommandScopeChat,
     CallbackQuery,
+    Chat,
     FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -41,11 +42,12 @@ from aiogram.types import (
 )
 from aiogram_dialog import DialogManager, ShowMode, setup_dialogs
 from aiogram_dialog.api.exceptions import UnknownIntent, UnknownState
+from aiogram_dialog.api.protocols import MessageNotModified
 from aiogram_dialog.manager.message_manager import MessageManager
 
 from telegram_vibecoding import BOT_NAME
 from telegram_vibecoding.book import SessionBook
-from telegram_vibecoding.client import CoreClient
+from telegram_vibecoding.client import CoreClient, SessionActionsClient
 from telegram_vibecoding.config import Settings
 from telegram_vibecoding.confirmation import Confirmations, GuardedClient
 from telegram_vibecoding.confirmation import application as confirmation_application
@@ -108,41 +110,126 @@ class SQLiteFSM(BaseStorage):
 class PanelMessages(MessageManager):
     def __init__(self, app):
         self.app = app
+        self.pending = None
+        self.actual = None
+        self.last_render = None
+        self.ready = asyncio.Event()
+
+    @staticmethod
+    def same_render(left, right):
+        # Chat's SDK binding/private fields differ between callbacks and background renders.
+        return left is not None and left.chat.id == right.chat.id and replace(left, chat=right.chat) == right
 
     async def show_message(self, bot, new_message, old_message):
+        # Rendering updates dialog state, but never waits for Telegram writes.
+        new_message = replace(
+            new_message,
+            chat=Chat(id=new_message.chat.id, type=new_message.chat.type),
+            show_mode=ShowMode.EDIT,
+        )
+        previous = self.pending
+        receipt = self.app.view_receipt if self.app.read_requested else None
+        if (
+            previous
+            and self.same_render(previous[0], new_message)
+            and receipt is None
+            and previous[2]
+            and previous[2][0] == self.app.store.get("selected")
+            and self.app.store.get("screen") in {Screens.chat.state, Screens.history.state}
+        ):
+            receipt = previous[2]
+        batch = [r["id"] for r in self.app.store.rows("SELECT id FROM outbox WHERE status='pending'")]
+        self.pending = (new_message, old_message, receipt, batch)
+        self.app.read_requested = False
+        self.app.view_receipt = None
+        self.ready.set()
+        raise MessageNotModified("Panel queued for independent delivery")
+
+    async def publish_pending(self):
+        # Wait before choosing the snapshot: intermediate renders are coalesced.
+        await asyncio.sleep(max(0, self.app.pacer.last_write + self.app.pacer.interval - time.monotonic()))
         async with self.app.send_lock:
-            published = int(self.app.store.get("panel_id", "0"))
-            if old_message and published > old_message.message_id:
-                old_message = replace(old_message, message_id=published, text=None)
-            if old_message and (
-                self.app.restart_pending
-                or old_message.message_id
-                < max(
-                    int(self.app.store.get("last_user_message_id", "0")),
-                    int(self.app.store.get("last_notice_message_id", "0")),
-                )
+            pending = self.pending
+            if pending is None:
+                return
+            new_message, old_message, receipt, batch = pending
+            floor = max(
+                int(self.app.store.get("last_user_message_id", "0")),
+                int(self.app.store.get("last_notice_message_id", "0")),
+            )
+            if (
+                self.actual
+                and self.same_render(self.last_render, new_message)
+                and self.actual.message_id >= floor
             ):
-                # Editing preserves Telegram chronology. Publish below new input first.
-                await self.app.throttle()
-                sent = await super().show_message(bot, replace(new_message, show_mode=ShowMode.SEND), None)
-                self.app.store.set("panel_id", str(sent.message_id))
-                self.app.panel_published(new_message.text)
-                retired = json.loads(self.app.store.get("retired_panels", "[]"))
-                self.app.store.set("retired_panels", json.dumps([*retired, old_message.message_id]))
-                log.info(
-                    "Panel moved below input: old=%s new=%s input=%s",
-                    old_message.message_id,
-                    sent.message_id,
-                    self.app.store.get("last_user_message_id"),
-                )
-                await self.app.clean_retired_panels()
-                return sent
-            if old_message is None or self._message_changed(new_message, old_message):
-                await self.app.throttle()
-            sent = await super().show_message(bot, new_message, old_message)
+                sent = self.actual
+            else:
+                sent = await self._publish(self.app.bot, new_message, self.actual or old_message)
+        self.actual = sent
+        self.last_render = new_message
+        with self.app.store.db:
+            self.app.store.db.executemany(
+                "UPDATE outbox SET status='sent',telegram_id=? WHERE id=?",
+                [(sent.message_id, row) for row in batch],
+            )
+        if self.pending is pending:
+            if receipt:
+                self.app.store.mark_viewed(*receipt)
+            self.pending = None
+            self.ready.clear()
+        # Only persist a real accepted message ID, without holding UI state
+        # across the HTTP request. The SDK may also recover from old callbacks.
+        async with self.app.ui_lock:
+            bg = self.app.background.bg(
+                self.app.bot, self.app.settings.allowed_user_id, self.app.settings.allowed_user_id
+            )
+            async with foreground(bg) as manager:
+                stack = manager.current_stack()
+                stack.last_message_id = sent.message_id
+                stack.last_media_id = sent.media_id
+                stack.last_media_unique_id = sent.media_uniq_id
+                stack.last_reply_keyboard = sent.has_reply_keyboard
+                stack.content_type = sent.content_type
+                stack.has_protected_content = sent.has_protected_content
+
+    async def publish(self, bot, new_message, old_message):
+        async with self.app.send_lock:
+            return await self._publish(bot, new_message, old_message)
+
+    async def _publish(self, bot, new_message, old_message):
+        published = int(self.app.store.get("panel_id", "0"))
+        if old_message and published > old_message.message_id:
+            old_message = replace(old_message, message_id=published, text=None)
+        if old_message and (
+            self.app.restart_pending
+            or old_message.message_id
+            < max(
+                int(self.app.store.get("last_user_message_id", "0")),
+                int(self.app.store.get("last_notice_message_id", "0")),
+            )
+        ):
+            # Editing preserves Telegram chronology. Publish below new input first.
+            sent = await super().show_message(bot, replace(new_message, show_mode=ShowMode.SEND), None)
             self.app.store.set("panel_id", str(sent.message_id))
             self.app.panel_published(new_message.text)
+            retired = json.loads(self.app.store.get("retired_panels", "[]"))
+            self.app.store.set("retired_panels", json.dumps([*retired, old_message.message_id]))
+            log.info(
+                "Panel moved below input: old=%s new=%s input=%s",
+                old_message.message_id,
+                sent.message_id,
+                self.app.store.get("last_user_message_id"),
+            )
             return sent
+        try:
+            sent = await super().show_message(bot, new_message, old_message)
+        except MessageNotModified:
+            if old_message is None:
+                raise
+            sent = old_message
+        self.app.store.set("panel_id", str(sent.message_id))
+        self.app.panel_published(new_message.text)
+        return sent
 
 
 class BotRuntime:
@@ -188,7 +275,9 @@ class BotRuntime:
                 self.bot.session.middleware.unregister(middleware)
         self.pacer = ChatPacer(self.store, settings.allowed_user_id)
         self.bot.session.middleware.register(self.pacer)
-        self.engine = engine or CoreClient(settings)
+        if isinstance(engine, SessionActionsClient):
+            engine = engine.client
+        self.engine: Any = SessionActionsClient(engine or CoreClient(settings), self.cancel_inputs)
         self.confirmations = Confirmations(self.store) if settings.confirmation_required else None
         if self.confirmations:
             self.engine = GuardedClient(self.engine, self.confirmations)
@@ -207,6 +296,11 @@ class BotRuntime:
         self.ui_lock = asyncio.Lock()
         self.stop_event = asyncio.Event()
         self.startup_done = asyncio.Event()
+        self.intake_ready = asyncio.Event()
+        self.callback_ready = asyncio.Event()
+        self.callbacks: dict[str, float] = {}
+        self.input_tasks: dict[str, asyncio.Task] = {}
+        self.last_interaction = 0.0
         self._setup()
 
     def _setup(self):
@@ -282,7 +376,8 @@ class BotRuntime:
 
         self.dp.include_router(controls)
         self.dp.include_router(make_dialog())
-        self.background = setup_dialogs(self.dp, message_manager=PanelMessages(self))
+        self.panels = PanelMessages(self)
+        self.background = setup_dialogs(self.dp, message_manager=self.panels)
 
     async def refresh_panel(self) -> bool:
         if not self.store.get("screen"):
@@ -477,7 +572,7 @@ class BotRuntime:
     def capture(self, update: dict):
         if not authorized(update, self.settings.allowed_user_id):
             # Still advance the transport cursor so unauthorized updates do not loop.
-            self.store.set("offset", str(update["update_id"] + 1))
+            self.store.advance_offset(update["update_id"])
             return False
         sid, mode = self.store.get("selected") or None, self.store.get("mode", "menu")
         message = update.get("message", {})
@@ -504,7 +599,8 @@ class BotRuntime:
             )
         if group := message.get("media_group_id"):
             first = self.store.one(
-                "SELECT session_id,mode,body FROM inbox WHERE json_extract(body,'$.message.media_group_id')=? ORDER BY id LIMIT 1",
+                "SELECT session_id,mode,body FROM inbox WHERE status!='received' "
+                "AND json_extract(body,'$.message.media_group_id')=? ORDER BY id LIMIT 1",
                 (group,),
             )
             if first:
@@ -763,6 +859,9 @@ class BotRuntime:
                 },
             )
             sid = session["id"]
+            task = asyncio.current_task()
+            if task is not None and task in self.input_tasks.values():
+                self.input_tasks[sid] = task
             with self.store.db:
                 self.store.db.executemany(
                     "UPDATE inbox SET session_id=?,mode='chat' WHERE id=?",
@@ -841,44 +940,95 @@ class BotRuntime:
         for r in rows:
             self.store.processed(r["id"])
 
-    async def inbox_loop(self):
-        while not self.stop_event.is_set():
-            rows = self.store.rows("SELECT * FROM inbox WHERE status='pending' ORDER BY id LIMIT 100")
-            used: set[int] = set()
-            blocked: set[str] = set()
-            for row in rows:
-                if row["id"] in used or row["session_id"] in blocked:
-                    continue
-                body = json.loads(row["body"])
-                if self.is_control(body) or row["mode"] == "input":
-                    # Controls are owned by the polling loop and serialized with dialog input.
-                    continue
-                group = body.get("message", {}).get("media_group_id")
-                batch = (
-                    [
-                        r
-                        for r in rows
-                        if group and json.loads(r["body"]).get("message", {}).get("media_group_id") == group
-                    ]
-                    if group
-                    else [row]
+    async def process_batch(self, batch: list[dict]):
+        try:
+            await self.process_messages(batch)
+        except ValueError as exc:
+            self.store.set("notice", str(exc)[:1000])
+            if not await self.refresh_panel():
+                await self.send(str(exc)[:1000])
+            for row in batch:
+                self.store.processed(row["id"])
+        except Exception as exc:
+            log.warning("Inbox retained for retry: %s", type(exc).__name__)
+
+    async def cancel_inputs(self, sid: str):
+        intents = {
+            r["intent"]
+            for r in self.store.rows(
+                "SELECT DISTINCT json_extract(body,'$._relay.new_session_key') AS intent FROM inbox "
+                "WHERE session_id=?",
+                (sid,),
+            )
+            if r["intent"]
+        }
+        task = self.input_tasks.get(sid)
+        if task is not None:
+            intents.update(key for key, value in self.input_tasks.items() if value is task)
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            for key in list(self.input_tasks):
+                if self.input_tasks[key] is task:
+                    self.input_tasks.pop(key)
+        rows = [
+            r
+            for r in self.store.rows("SELECT * FROM inbox WHERE status IN ('pending','auth_pending')")
+            if r["session_id"] == sid
+            or json.loads(r["body"]).get("_relay", {}).get("new_session_key") in intents
+        ]
+        for row in rows:
+            if self.is_control(json.loads(row["body"])):
+                continue
+            if self.confirmations:
+                link = self.store.one("SELECT action_id FROM auth_inbox WHERE inbox_id=?", (row["id"],))
+                if link:
+                    self.confirmations.completed(link["action_id"], "cancelled")
+            with self.store.db:
+                self.store.db.execute(
+                    "UPDATE inbox SET status='done',error='Cancelled by Stop/Archive before delivery' WHERE id=?",
+                    (row["id"],),
                 )
-                if group and time.time() - max(r["created"] for r in batch) < 1:
-                    blocked.add(row["session_id"])
-                    continue
+
+    async def inbox_loop(self):
+        active = self.input_tasks
+        try:
+            while not self.stop_event.is_set():
+                for key, task in list(active.items()):
+                    if task.done():
+                        if not task.cancelled():
+                            await task
+                        active.pop(key, None)
+                rows = self.store.rows("SELECT * FROM inbox WHERE status='pending' ORDER BY id")
+                blocked = set(active)
+                for row in rows:
+                    body = json.loads(row["body"])
+                    if self.is_control(body) or row["mode"] in {"input", "received"}:
+                        continue
+                    key = row["session_id"] or body.get("_relay", {}).get("new_session_key") or "menu"
+                    if key in blocked or len(active) >= 4:
+                        continue
+                    group = body.get("message", {}).get("media_group_id")
+                    batch = (
+                        [
+                            r
+                            for r in rows
+                            if json.loads(r["body"]).get("message", {}).get("media_group_id") == group
+                        ]
+                        if group
+                        else [row]
+                    )
+                    blocked.add(key)
+                    if group and time.time() - max(r["created"] for r in batch) < 1:
+                        continue
+                    active[key] = asyncio.create_task(self.process_batch(batch))
                 try:
-                    await self.process_messages(batch)
-                    used.update(r["id"] for r in batch)
-                except ValueError as exc:
-                    self.store.set("notice", str(exc)[:1000])
-                    if not await self.refresh_panel():
-                        await self.send(str(exc)[:1000])
-                    for r in batch:
-                        self.store.processed(r["id"])
-                except Exception as exc:
-                    log.warning("Inbox retained for retry: %s", type(exc).__name__)
-                    blocked.add(row["session_id"])
-            await asyncio.sleep(0.3)
+                    await asyncio.wait_for(self.stop_event.wait(), timeout=0.05)
+                except TimeoutError:
+                    pass
+        finally:
+            for task in active.values():
+                task.cancel()
+            await asyncio.gather(*active.values(), return_exceptions=True)
 
     def watching_session(self, sid: str) -> bool:
         return self.store.get("selected") == sid and self.store.get("screen") in {
@@ -946,12 +1096,6 @@ class BotRuntime:
         rows = self.store.rows("SELECT id FROM outbox WHERE status='pending' ORDER BY id LIMIT 100")
         if not rows or not await self.refresh_panel():
             return False
-        # Acknowledge only the captured batch: newer events remain pending.
-        with self.store.db:
-            self.store.db.executemany(
-                "UPDATE outbox SET status='sent',telegram_id=? WHERE id=?",
-                [(self.store.get("panel_id"), row["id"]) for row in rows],
-            )
         return True
 
     async def send_attachment(self, sid: str, aid: str, *, locked=False):
@@ -1137,8 +1281,9 @@ class BotRuntime:
             try:
                 await self.deliver_pending()
                 await self.deliver_answers()
-                async with self.send_lock:
-                    await self.clean_retired_panels()
+                if not self.panels.pending and time.monotonic() - self.last_interaction >= 2:
+                    async with self.send_lock:
+                        await self.clean_retired_panels()
             except TelegramRetryAfter as exc:
                 await asyncio.sleep(exc.retry_after)
             except Exception as exc:
@@ -1227,6 +1372,9 @@ class BotRuntime:
     async def preview_loop(self):
         while not self.stop_event.is_set():
             try:
+                if time.monotonic() - self.last_interaction < 2 or self.ui_lock.locked():
+                    await asyncio.sleep(0.25)
+                    continue
                 if self.store.get("mode") == "chat":
                     live = await self.engine.call("/live")
                     if self.store.get("selected") in live:
@@ -1250,13 +1398,70 @@ class BotRuntime:
             await asyncio.sleep(1.5)
 
     async def receive_update(self, update: Update) -> None:
-        # Telegram only supplied set fields. SDK defaults can contain non-JSON sentinels.
         body = update.model_dump(mode="json", exclude_none=True, exclude_unset=True, by_alias=True)
-        if self.capture(body):
-            row = self.store.one("SELECT * FROM inbox WHERE id=?", (update.update_id,))
-            if row and not self.pacer.remaining and (self.is_control(body) or row["mode"] == "input"):
-                await self.process_navigation(row)
+        if authorized(body, self.settings.allowed_user_id):
+            # A separate ordered consumer captures targets after prior navigation.
+            self.store.receive(update.update_id, body)
+            if callback := body.get("callback_query"):
+                self.callbacks[callback["id"]] = time.monotonic()
+                self.callback_ready.set()
+            self.last_interaction = time.monotonic()
+            self.intake_ready.set()
+        else:
+            self.store.advance_offset(update.update_id)
         self.store.set("poll_heartbeat", str(time.time()))
+
+    async def acknowledge_loop(self):
+        while not self.stop_event.is_set():
+            await self.callback_ready.wait()
+            while self.callbacks:
+                cid = next(iter(self.callbacks))
+                self.callbacks.pop(cid)
+                try:
+                    await self.bot.answer_callback_query(cid, request_timeout=2)
+                except TelegramAPIError as exc:
+                    log.warning("Callback acknowledgement unavailable: %s", type(exc).__name__)
+            self.callback_ready.clear()
+
+    async def navigation_tick(self):
+        for row in self.store.rows(
+            "SELECT * FROM inbox WHERE status='received' OR (status='pending' AND (mode='input' "
+            "OR json_type(body,'$.callback_query')='object' "
+            "OR json_extract(body,'$.message.text') GLOB '/[A-Za-z]*')) ORDER BY id"
+        ):
+            if row["status"] == "received":
+                self.capture(json.loads(row["body"]))
+                row = self.store.one("SELECT * FROM inbox WHERE id=?", (row["id"],)) or row
+            if self.is_control(json.loads(row["body"])) or row["mode"] == "input":
+                await self.process_navigation(row)
+                log.info(
+                    "Navigation accepted: update=%s delay_ms=%.1f",
+                    row["id"],
+                    (time.time() - row["created"]) * 1000,
+                )
+
+    async def navigation_loop(self):
+        while not self.stop_event.is_set():
+            self.intake_ready.clear()
+            try:
+                await self.navigation_tick()
+            except Exception as exc:
+                log.warning("Navigation retained for retry: %s", type(exc).__name__)
+            try:
+                await asyncio.wait_for(self.intake_ready.wait(), timeout=0.1)
+            except TimeoutError:
+                pass
+
+    async def panel_loop(self):
+        while not self.stop_event.is_set():
+            await self.panels.ready.wait()
+            try:
+                await self.panels.publish_pending()
+            except TelegramRetryAfter as exc:
+                await asyncio.sleep(exc.retry_after)
+            except Exception as exc:
+                log.warning("Panel delivery retained: %s", type(exc).__name__)
+                await asyncio.sleep(1)
 
     async def poll(self):
         me = await self.bot.get_me()
@@ -1302,14 +1507,8 @@ class BotRuntime:
         self.store.set("poll_heartbeat", str(time.time()))
         log.info("Bot connected: @%s; owner=%s", me.username, self.settings.allowed_user_id)
         while not self.stop_event.is_set():
-            stage = "retry_controls"
+            stage = "get_updates"
             try:
-                # UI/input operations must finish before a newer selection can overtake them.
-                for pending_row in self.store.rows("SELECT * FROM inbox WHERE status='pending' ORDER BY id"):
-                    if self.pacer.remaining:
-                        break
-                    if self.is_control(json.loads(pending_row["body"])) or pending_row["mode"] == "input":
-                        await self.process_navigation(pending_row)
                 stage = "get_updates"
                 updates = await self.bot.get_updates(
                     offset=int(self.store.get("offset", "0")),
@@ -1499,6 +1698,9 @@ class BotRuntime:
             asyncio.create_task(fn())
             for fn in [
                 self.poll,
+                self.acknowledge_loop,
+                self.navigation_loop,
+                self.panel_loop,
                 self.startup_loop,
                 self.inbox_loop,
                 self.events_loop,

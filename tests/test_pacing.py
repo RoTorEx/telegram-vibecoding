@@ -34,7 +34,7 @@ async def test_chat_cooldown_is_durable_and_reads_continue_without_api_write_ret
 
     assert ChatPacer(runtime.store, 42).remaining > 3500
     await runtime.receive_update(Update.model_validate(update(500, "/menu")))
-    assert runtime.store.one("SELECT status FROM inbox WHERE id=500")["status"] == "pending"
+    assert runtime.store.one("SELECT status FROM inbox WHERE id=500")["status"] == "received"
     assert runtime.store.get("offset") == "501"
 
 

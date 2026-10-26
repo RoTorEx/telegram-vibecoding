@@ -103,3 +103,28 @@ async def settle(engine):
             return
         await asyncio.sleep(0.001)
     raise AssertionError("Engine task did not settle")
+
+
+@pytest.fixture(autouse=True)
+def inline_panels_for_functional_tests(request, monkeypatch):
+    """Keep existing UI assertions deterministic; async tests use the real queue.
+
+    Functional tests already replace Telegram HTTP and pacing. Concurrency tests
+    explicitly retain the production enqueue/publisher boundary and real delays.
+    """
+    if request.node.get_closest_marker("async_transport"):
+        return
+    from telegram_vibecoding.bot import PanelMessages
+
+    async def inline(self, bot, new_message, old_message):
+        rows = self.app.store.rows("SELECT id FROM outbox WHERE status='pending'")
+        sent = await self.publish(bot, new_message, old_message)
+        with self.app.store.db:
+            self.app.store.db.executemany(
+                "UPDATE outbox SET status='sent',telegram_id=? WHERE id=?",
+                [(sent.message_id, r["id"]) for r in rows],
+            )
+        await self.app.clean_retired_panels()
+        return sent
+
+    monkeypatch.setattr(PanelMessages, "show_message", inline)

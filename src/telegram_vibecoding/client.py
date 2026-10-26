@@ -30,3 +30,24 @@ class CoreClient:
     async def close(self):
         if self.http:
             await self.http.close()
+
+
+class SessionActionsClient:
+    """Cancel frontend transfers before authorized native Stop/Archive."""
+
+    def __init__(self, client, cancel_inputs):
+        self.client, self.cancel_inputs = client, cancel_inputs
+
+    async def call(self, path: str, body: dict | None = None):
+        parts = path.strip("/").split("/")
+        if (
+            body is not None
+            and len(parts) == 3
+            and parts[0] == "sessions"
+            and parts[2] in {"stop", "archive"}
+        ):
+            await self.cancel_inputs(parts[1])
+        return await self.client.call(path, body)
+
+    async def close(self):
+        await self.client.close()

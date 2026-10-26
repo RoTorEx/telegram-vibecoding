@@ -148,14 +148,51 @@ Text and supported images pass unchanged to Core. New messages steer active
 work. The 20 MB Telegram cloud download ceiling is enforced. Agent response parts
 are at most 3200 UTF-16 units, leaving room for the header and notices below the
 4096-unit API limit. Albums use a one-second quiet window and retain their first
-captured target. All chat writes, including SDK-generated edits and deletion,
-share a minimum 3.1-second interval. This conservative budget stays below twenty
-writes per minute and prevents independent UI/answer/cleanup paths from bursting.
-Telegram retry_after takes precedence: persist its deadline and reject local
-write attempts until it expires without sending more requests. Reads and durable
-input capture continue. Startup notification/panel recovery runs independently
-of polling, so an outgoing cooldown cannot make a connected bot fail readiness.
-Deferred controls and answer parts resume after the cooldown; never bypass it.
+captured target. Chat sends, edits and deletion share a minimum 1.05-second
+interval, following Telegram's private-chat guidance of one message per second
+with a small scheduling margin. This replaces the group-oriented conservative
+3.1-second budget. Telegram retry_after still takes precedence: persist its
+deadline and reject local writes until it expires without making more requests.
+Callback acknowledgements bypass that write budget and duplicate SDK answers
+are suppressed with a bounded 512-ID process cache; acknowledgement is feedback,
+never authorization or proof of successful execution.
+
+Polling only durably saves authorized raw updates and advances a monotonic
+offset. A separate ordered navigation consumer resolves each input's session,
+location and input step after preceding controls. Targets remain immutable during
+media transfer and later navigation. Received updates survive restart. Navigation
+continues during outgoing flood waits; mutations still require any configured
+per-request device proof. Owner/private-chat checks apply before both intake and
+dispatch. Unknown native outcomes retain the existing no-replay contract.
+
+Dialog rendering queues the newest panel snapshot without waiting for Telegram.
+An independent publisher coalesces superseded snapshots and skips identical
+published content; SDK Chat bindings are not visible content. It never holds the
+UI-state lock over network writes or rate-limit waits. Persist only actually
+accepted panel IDs and acknowledge only the captured outbox batch after successful
+publication. An explicit-view receipt belongs to its snapshot and cannot be
+acknowledged by a failed or superseded display. Save real SDK message/media state
+after publication. Reconstruct pending display from durable UI/outbox state on
+restart. Old-panel cleanup is deferred; foreground activity suppresses background
+preview/cleanup for two seconds to prioritize navigation. This is a responsiveness
+policy, not a promise of subsecond Telegram delivery.
+
+Input workers serialize each session/creation intent while processing at most
+four targets concurrently. This bounds transfer/resource concurrency without
+letting one slow recording/image block another session's text. Stop/Archive
+cancel the target's local transfers and queued inputs before calling Core, so
+finishing a transfer cannot start a new turn after Stop. Cancellation runs inside
+the device authorization boundary and retains captured input for normal retention.
+Independent polling, navigation, callback, panel, input and delivery tasks are
+cancelled/reaped on shutdown; bot updates preserve Core/native session identity.
+Startup output and readiness remain independent of outgoing cooldowns.
+
+Tests with the production queue and pacing verify slow-HTTP isolation, callback
+acknowledgement, switch-then-send ordering, latest-panel coalescing, no-op refresh,
+failed-publication receipts/outbox, flood waits, cross-session transfer concurrency
+and Stop during transfer. Existing functional UI tests explicitly inline the
+publisher to inspect formatting/state deterministically; they are not latency
+benchmarks. Details and measured acceptance are in docs/responsiveness.md.
 
 The frontend owns bot.db: captured input, UI state, offsets and output refresh
 requests. Input targets are captured before downloads/navigation. Button navigation and streaming edit the current panel. A new owner message
