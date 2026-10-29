@@ -51,3 +51,20 @@ class SessionActionsClient:
 
     async def close(self):
         await self.client.close()
+
+
+class ReadOnlyCoreClient:
+    """Fail closed before transport: notifier has no agent/lifecycle write capability."""
+
+    def __init__(self, client):
+        self.client = client
+
+    async def call(self, path: str, body: dict | None = None):
+        import re
+
+        if body is not None or not re.fullmatch(r"/(?:health|sessions|live|events\?after=[0-9]+)", path):
+            raise PermissionError("Telegram notifier cannot mutate Core or access this endpoint")
+        return await self.client.call(path)
+
+    async def close(self):
+        await self.client.close()

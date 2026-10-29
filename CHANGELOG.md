@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+- Replace the production Telegram entrypoint with a notification-only runtime.
+  Reject executable intake, media downloads, lifecycle/settings/question actions
+  and all legacy callbacks; permit only read-only owner activity/statistics.
+- Add a fail-closed Core GET allowlist and URL-only links to exact web chats.
+  Send metadata completion/question notices with model/effort/mode, duration and
+  run input counts; do not forward prompt/answer bodies or captured files.
+- Persist notification capture, counters and cursor atomically, retain known-send
+  receipts across restart and keep notifier state independent of legacy queues.
+- Report notifications-only capabilities for safe activation/rollback checks.
+
 ## [0.1.27] - 2026-10-26
 
 - Queue service replies, including /auth and error notices, independently of navigation so a Telegram flood wait cannot block later controls. Retain unsent replies across restart and expire local service copies with the seven-day retention policy.

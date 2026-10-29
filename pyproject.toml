@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "telegram-vibecoding"
 dynamic = ["version"]
-description = "Private Telegram interface for Remote Vibecoding."
+description = "Notification-only Telegram companion for Remote Vibecoding."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = ["aiogram>=3.13,<4", "aiogram-dialog>=2.5,<3", "aiohttp>=3.10,<4", "markdown-it-py>=3,<5"]

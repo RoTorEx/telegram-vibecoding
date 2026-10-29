@@ -1,3 +1,6 @@
+> Legacy reference: the production entrypoint is now notification-only. Do not
+> activate executable Telegram intake or the confirmation server. See BUSINESS.md.
+
 # Asynchronous Telegram interaction
 
 The owner requested responsive phone controls after observing 10–15-second button

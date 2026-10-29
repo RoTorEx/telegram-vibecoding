@@ -1,50 +1,38 @@
-# Telegram Vibecoding
+# Remote Vibecoding Notifier
 
-The private Telegram interface of Remote Vibecoding.
+Telegram receives completion/question notifications and read-only activity
+statistics. All Codex requests and session controls belong in the private
+[Web Vibecoding workspace](https://vibecoding.com), reached through the owner's
+VPN. Telegram text, files, voice, slash commands and old buttons cannot invoke
+or control an agent. Use /status or /stats for current activity.
 
-Open @GardenSandbox_bot and send /menu. Choose Location, a numbered host
-directory, then a session. Sending text, images or voice from the location's
-session list starts a new session there. Session controls put Config, Details
-and History on the first row, an emergency Stop on its own full-width row only
-while work is active, and Back/Deck last. Config contains model, reasoning and
-Plan settings. History reads ordered pages continuously and offers separate
-iteration jumps between execution iterations. Each iteration starts at the initial
-user request and includes steering additions, progress, published reasoning,
-questions and answers through completion. Consecutive roles share pages when
-they fit, so the conversation reads from top to bottom. Image pages show attached media
-directly; text pages remove it. Main Deck contains account Limits and reset
-times. Completion notices show elapsed work time and Open session; the active
-panel moves below notices and keeps its captured session context. Long answers
-arrive in full as consecutive messages above the controls. Their parts remain in
-Telegram after follow-ups; History still contains the complete conversation.
-Opening Journal publishes only the current answer. Older partial delivery never
-appears after a newer result; read previous iterations through History.
+Every notice links directly to its native web chat and shows host/path, selected
+model/reasoning/mode, elapsed work and input count. Auto does not claim to identify
+the engine's resolved model. Prompt bodies, answers and files remain in web chat.
 
-Text and images go directly to Vibecoding Core.
+Run make install and make check. Integration checks use the sibling Core fixture;
+production code uses only its private API and has no Core implementation import.
+The CLI starts the notification-only runtime. Legacy interactive modules and
+state are preserved for recovery, but the old execution workflow is retired.
 
-Optional device confirmation keeps each executable request pending until an
-independently enrolled phone authorizes it through a biometric Mini App. See
-[activation, enrollment and recovery](docs/confirmation.md). The patch alone does
-not enable protection: trusted private HTTPS and phone acceptance are required.
+Private bot.toml selects the numeric owner, verified bot_username, web_url,
+Core runtime_dir and the notifier's own data_dir. Store the notifier token in
+~/.config/remote-vibecoding/notifier-token with mode 600. Verify getMe before
+cutover; the owner must open the intended bot and press Start before Telegram
+will accept notifications. Never put the token in commands, Git or logs.
 
-Run make install and make check. Integration checks require the sibling
-vibecoding-core checkout; the deployed bot has no Core package dependency.
-Common Compose operations are run from the parent Remote Vibecoding workspace.
+The shared Compose deployment mounts only the notifier state, read-only API
+socket directory, config and token, without a confirmation port. Run make
+deploy-bot from the parent workspace after checks/commit. Activation and rollback
+reject images without the notifications-only capability. A failed first cutover
+stops Telegram instead of restoring an interactive bot; Core continues running.
+See [Core operations](../vibecoding-core/docs/operations.md) for the shared owner.
+Preserve the old token and shared bot state without starting the old poller.
+Back up the new notifier SQLite ledger consistently; legacy Core snapshots cover
+the previous shared bot.db. Losing notifier metadata creates a new observation
+baseline; it cannot execute an input.
 
-Each component has independent semantic versions, changelog and annotated Git
-tags. The canonical version is its own src package __init__.py; Hatch derives
-package metadata from it. uv.lock locks dependencies and records the root
-package as dynamic; the installed metadata and wheel carry the concrete version.
-Run make release interactively and enter MAJOR.MINOR.PATCH at the prompt; this
-checks, updates metadata/changelog and creates a local release commit/tag.
-Then make release-push atomically pushes only this repository's main and release
-tag and verifies the remote references. Neither command deploys or releases the
-sibling. Common deployment continues to select each image revision separately.
-
-Both projects use Vibecoding Kernel 1.3.5. Run make vibe-pull to refresh the local
-committed rules; make vibe-kernel-set configures the machine-local kernel path.
-
-Local message and media copies expire seven days after saving, checked every
-15 minutes. Pending/active work is retained until it resolves. The configured
-state directory owns bot.db, engine.db and uploads; native Codex history and
-Telegram cloud messages are outside this cleanup.
+Run make release interactively, enter the exact version, then make release-push.
+Versions, changelog and annotated tags are independent of Core/web. --capabilities
+reports notifications-only without requiring credentials. See [BUSINESS.md](BUSINESS.md)
+for the security boundary, statistics definitions, retention and recovery.

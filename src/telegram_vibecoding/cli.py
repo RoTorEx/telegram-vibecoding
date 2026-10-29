@@ -33,6 +33,9 @@ def healthy(settings: Settings, instance_file=Path("/tmp/telegram-vibecoding-ins
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", action="version", version=__version__)
+    parser.add_argument(
+        "--capabilities", action="store_true", help="Report the notification-only runtime contract"
+    )
     parser.add_argument("--config", type=Path)
     parser.add_argument("--health", action="store_true")
     auth = parser.add_mutually_exclusive_group()
@@ -44,6 +47,9 @@ def main():
     auth.add_argument("--auth-devices", action="store_true", help="List enrolled devices without secrets")
     auth.add_argument("--auth-revoke", metavar="DEVICE", help="Revoke a device and its unused approvals")
     args = parser.parse_args()
+    if args.capabilities:
+        print("notifications-only")
+        return
     os.umask(0o077)
     settings = Settings.load(args.config)
     if args.auth_enroll or args.auth_devices or args.auth_revoke:
@@ -68,7 +74,7 @@ def main():
         if not healthy(settings):
             raise SystemExit(1)
         return
-    from telegram_vibecoding.bot import run
+    from telegram_vibecoding.notifier import run
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("aiohttp").setLevel(logging.CRITICAL)

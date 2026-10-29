@@ -1,3 +1,6 @@
+> Legacy reference: the production entrypoint is now notification-only. Do not
+> activate executable Telegram intake or the confirmation server. See BUSINESS.md.
+
 # Device confirmation operations
 
 This feature authorizes individual Telegram requests before native execution.

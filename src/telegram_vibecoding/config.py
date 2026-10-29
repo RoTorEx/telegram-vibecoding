@@ -16,6 +16,7 @@ class Settings:
     allowed_user_id: int = 0
     host_id: str = "vps"
     bot_username: str = ""
+    web_url: str = "https://vibecoding.com"
     confirmation_required: bool = False
     confirmation_url: str = ""
     confirmation_host: str = "127.0.0.1"
@@ -40,6 +41,21 @@ class Settings:
         runtime = Path(values.pop("runtime_dir", str(data / "run"))).expanduser()
         token = Path(values.pop("token_file", "~/.config/remote-vibecoding/bot-token")).expanduser()
         return cls(data_dir=data, runtime_dir=runtime, token_file=token, **values)
+
+    def validate_web_url(self) -> None:
+        from urllib.parse import urlsplit
+
+        url = urlsplit(self.web_url)
+        if (
+            url.scheme not in {"http", "https"}
+            or not url.hostname
+            or url.username
+            or url.password
+            or url.query
+            or url.fragment
+            or url.path not in {"", "/"}
+        ):
+            raise ValueError("web_url must be an HTTP(S) origin without credentials, query or fragment")
 
     def prepare(self) -> None:
         if self.confirmation_required:

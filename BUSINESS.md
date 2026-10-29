@@ -1,440 +1,117 @@
-# Telegram Vibecoding
+# Remote Vibecoding Notifier
 
-## Purpose and actors
+## Purpose and security boundary
 
-Aleksey uses this private Telegram interface to work with native host agents
-through Vibecoding Core. Only the configured numeric owner in their private
-chat may send input or use callbacks. No extra LLM or rewritten prompts.
+Telegram is a notification-only companion to the private Web Vibecoding
+workspace. The owner explicitly retired agent access through Telegram because
+an account compromise must not grant Codex access to VPS files, sudo or connected
+services. Native execution and session management belong to the web interface
+and Core. Do not restore executable Telegram intake, even behind a confirmation
+screen, without a new explicit owner decision.
 
-## Optional device confirmation
+The production CLI imports notifier.run, which starts only update polling and
+notification collection/delivery. It does not start the legacy interactive
+runtime, inbox workers, media downloads, confirmation server, navigation,
+question-answer submission or answer delivery. Existing legacy state and source
+remain available for recovery/reference and are never replayed by this runtime.
 
-The owner requested protection against a stolen Telegram account or phone while
-keeping Telegram text, images and voice. When confirmation_required is enabled,
-each executable input and Core mutation requires its own enrolled-device proof.
-Read-only navigation and Telegram-delivered history remain account-readable.
-There is no account-wide unlock, automatic enrollment, Telegram-only recovery,
-or password fallback when biometrics are unavailable. Native execution remains
-unchanged after a request is authorized; this does not add shell-command approvals.
+Text, slash commands, photos, documents, voice, replies, edited messages and old
+callback buttons cannot start, steer, stop, archive, rename or configure an agent,
+register paths or answer native questions. Only the configured numeric owner in
+that same private chat receives read-only replies. Unknown inputs explain this
+boundary and link to the web workspace; unauthorized/group updates are ignored.
+Incoming content is not copied into a durable inbox or downloaded.
 
-Telegram BiometricManager unlocks a random device secret from local secure
-storage. The client signs a server challenge using HMAC-SHA-256. The server checks
-fresh signed Telegram initData, owner, enrolled device, immutable request digest,
-one-use proof, status and expiry. A deviceId or client success boolean is never
-authorization. The API is not hardware attestation of a fresh face scan: the
-exportable secret, the official client, HTTPS origin and phone OS are trusted.
-Biometrics means the device's enrolled biometric users, not our own face database.
+A fail-closed Core client allows only GET /health, /sessions, /live and
+/events?after=<numeric cursor>. It rejects every request body and all other paths
+before transport, including GET attempts at mutation routes. No extra model,
+prompt rewriting, native permission change or Core implementation import exists.
 
-An administrator enrolls a phone with an independent 256-bit one-use code valid
-for ten minutes. Existing active device keys cannot be replaced without SSH
-revocation. Each request expires after ten minutes to allow reviewing recordings;
-each proof expires after sixty seconds or the request deadline, whichever comes
-first. Mini App initData must be no older than five minutes, with thirty seconds
-of future-clock tolerance. These bounds limit stolen/replayed authorization data;
-expiry leaves the agent untouched and requires a new request. At most 100 requests
-may await confirmation. API limits are 120 authenticated requests per minute and
-five enrollment attempts per minute, globally, to bound local endpoint abuse.
-These are availability bounds, not substitutes for random secrets or VPN access.
+## Notifications and links
 
-Pending input keeps its captured session/directory, original Telegram media IDs
-and question/answer context across restart. Photos and recordings can be reviewed
-before authorization. Approval of one request never releases another. Late album
-parts cannot extend a signed batch. Cancelled/expired input is not executed;
-retries of accepted native messages reuse existing stable request identities.
-Controls with an unknown dispatch outcome are marked uncertain and never blindly
-replayed. Auth request payloads follow the seven-day local interface retention;
-active pending work remains protected. Device secrets live only in private bot.db
-and biometric device storage, and must remain in private backup snapshots.
+Send a boot notice, every new terminal outcome and questions requiring owner
+input. Do not suppress notices based on a remembered Telegram selection. Native
+answer/prompt/reasoning bodies and files remain in the private web chat; Telegram
+receives metadata only. Every notice has a URL button to the exact captured
+session using web_url/#<native session id>. There are no executable callback
+buttons. Web access still requires the owner's VPN and browser trust.
 
-Serve the app through trusted HTTPS reachable only through the owner's VPN.
-Loopback port 8790 is for the host gateway, not public access. New installations
-remain compatible with the existing transport until explicit configuration and
-phone acceptance; shipping the capability does not mean protection is activated.
-Configuration, enrollment, recovery and limitations are in docs/confirmation.md.
+Notices show outcome, session, host/path, selected model, effort and mode, work
+duration and number of original/steering inputs in that run. Auto means Core did
+not report an explicit session model; never invent the resolved active model.
+Duration runs from the first retained user event after the previous terminal
+event to this terminal event. Steering does not reset it. Missing evidence is
+unavailable rather than session age. A run spanning activation may include time
+and input from before activation, while aggregate counters include only events
+observed after activation.
 
-## Interaction contract
+At first activation, scan retained events to establish current work intervals but
+never notify historical outcomes. Persist event capture, aggregate counters and
+cursor in one SQLite transaction; re-reading an event cannot count it twice.
+Accepted Telegram message IDs are durable, so known successful delivery is not
+repeated after restart. A failed send stays queued. Telegram provides no send
+idempotency key, so an acknowledgement lost after acceptance can still duplicate
+a notice; this never creates an agent input.
 
-Main Deck and its navigation button use 🏠. Main Deck has Settings and Terminal
-side by side, followed by Location and Journal. Its text shows session counts,
-without a selected location or path. Terminal reports bot/Core versions, protocol,
-host, Core revision/health, native process, intake, queued inputs and session/
-question/unread counts. Model, reasoning and Plan controls live in session Config; Settings explains
-that location. Account Limits is available from Main Deck and shows native quota
-windows, remaining percentages and reset timestamps with Warsaw's actual zone.
-Unknown/unsupported data stays unavailable; reset credits are never consumed.
-Use Telegram's default button styling without a primary color accent.
-Every screen ends with Back on the left and Deck on the right in one row. Home is the default first
-location. Numbered 1–8 controls page through locations and directory-scoped
-sessions. Location choices show the bold project name and its plain path in parentheses on one line.
-Selecting a location does not start an agent. Sending text, supported images or
-voice from that location's session list creates a session in its captured path.
-Fast messages from the same list visit share a durable creation intent. Capture
-the path/intent before navigation or downloads; retrying session creation and
-input must reuse their identities. Main Deck/Settings input never starts work. Untouched, idle New session drafts
-without native threads or captured input are hidden from session lists; the New
-session button remains available. Draft records and history are preserved. The ➕ New action appears only within a location, beside ✏️ Edit.
-Edit is also available in Journal; its scope is the location or all projects,
-respectively. It lists drafts too, and opens an explicit Archive action stating
-that active work will stop. Archiving hides the session from active lists while
-retaining history and project files. There is no permanent-delete action. Locations are existing registered directories; do not expose
-a manual Other location input action in this menu.
+Each cycle drains at most ten Core event pages (100 events per v1 page),
+keeping initial retained-history catch-up finite without delaying new outcomes
+one page per poll. The three-second collection interval serves the owner's need for
+prompt notifications without another service. At most ten queued notices are
+sent per cycle, using the existing shared chat pacer (1.05 seconds between
+writes) to bound Telegram traffic. Local metadata notices expire after 604800
+seconds (seven days); small cursors/counters remain. No prompt/answer content
+enters this notice ledger. Boot identity remains per process.
 
-The main session screen contains its title, a compact model/status line with
-reasoning effort in parentheses next to the model (for example,
-GPT-6.1-Sol (medium) · Working), and current agent output. Its first control row
-contains Config, Details and History. Emergency Stop has a separate full-width row only while work is active; finished sessions hide it.
-Back and Deck occupy the last row. Config contains model,
-reasoning and Plan controls. Do not put these controls, role tabs, Images or
-history pagination on the main screen. Long current answers are delivered in full as consecutive standalone messages;
-the controls remain in a separate compact panel below them. Native pending questions add
-only their required answer controls. Stop retains native identity and history.
+## Read-only activity
 
-Chat history is a book reader of the entire retained conversation. An iteration
-spans the initial user request through the agent's terminal completion, including an interruption confirmed by the agent after Stop.
-Pressing Stop alone never ends an iteration. Steering additions, question
-answers, progress, published reasoning, questions and final responses stay in chronological order inside that iteration.
-A new request after completion begins a fresh page/iteration. Never infer iteration
-boundaries from each user event: that hides replies after steering additions.
-The reader follows the retained Core event feed incrementally, with a full
-refresh every minute to reflect seven-day expiry. Existing steering anchors
-resolve to their containing iteration; reset legacy page offsets once.
+/start and unsupported owner messages explain the notification-only boundary.
+/status and /stats show host, active/waiting/session counts, observed input and
+outcome totals, accumulated completed work duration and up to eight recent
+sessions with path, model, reasoning, mode, status and elapsed active time.
+The eight-row bound keeps the response inside Telegram's message limit; exact
+session work remains in the web UI. These commands never invoke inference.
+Do not claim token usage, billed cost, universal historical totals or an ETA.
+Operational boot timestamps use Europe/Warsaw with the applicable CET/CEST label;
+relative work durations do not depend on a time zone.
 
-Pack consecutive role blocks onto a page, starting with the user's original
-request and continuing with agent output below it when space permits. A fitting
-user message stays whole; an oversized message continues with a repeated You
-label. Text pages reserve 3500 visible UTF-16 units including role headings,
-leaving room for title/status and counters within Telegram's 4096-unit limit.
-Keep all published reasoning text, including code, in history. Raw tool output
-and unpublished reasoning are not conversation events. Repeat author/type labels
-on continuation pages. Render published reasoning in blockquotes, with its
-Reasoning author label outside the quote; preserve its text and formatting
-across page boundaries.
+## State and delivery
 
-Accepted text, images or voice sent while browsing history return the selected
-session to its main dialog controls, for both steering and new iterations.
-Question answers follow the same rule. Keep the captured input target and avoid
-replacing a different session/menu selected while delivery was pending.
-Automatic return does not acknowledge a completion.
+The notifier owns ~/.local/state/remote-vibecoding-notifier/bot.db and its own
+process lock. It does not write Core's engine.db or legacy bot.db. Preserve legacy
+shared state and credentials outside Git, without running the old interactive
+poller. The notifier token is a mode-0600 file, separately configured and pinned
+by its verified Telegram username. Never expose credentials or incoming content
+in logs. A mismatched configured username prevents startup.
 
-Page arrows read continuously across iteration boundaries: forward enters the next
-user page; backward enters the preceding iteration's last page. Iteration arrows
-always jump to the user page at the start of the adjacent iteration. Opening Chat
-history starts at the current iteration's first user page. Back restores the live
-session. Browsing uses a captured anchor/page cursor, so new output does not jump
-the reader to another iteration. Current activity/elapsed time remains in the
-header. There are no You/Codex/Updates filters or separate image gallery controls.
+The shared Compose definition belongs to Core. Bot mounts are limited to its own
+state directory, the read-only Core socket directory, configuration and notifier
+token. A read-only socket bind alone does not restrict its protocol; the client
+allowlist supplies that application boundary. There is no host home mount,
+captured upload mount, native database mount or published confirmation port.
+Updating only bot must preserve Core container/native session identity.
 
-Images are actual page media, scoped to their original request. User uploads
-follow their matching user block, and registered output images occupy their
-corresponding pages. Pack adjacent text into image captions up to 800 visible
-UTF-16 units including role headings, reserving room for metadata within
-Telegram's 1024-unit caption limit; continue long text on text pages. Photos use
-the 10 MB photo ceiling; larger supported originals (up to the existing 20 MB transport ceiling)
-use documents, and GIF uses animation. Returning to a text page removes media
-from the working panel. Preserve downloadable originals and attachment anchors.
-Only explicitly viewing the latest iteration's final page, or a complete current
-answer, acknowledges a completion. Browsing user/older/partial pages, Config,
-Details and background refreshes never mark new outcomes read.
+Readiness checks the current boot/PID and successful Telegram polling heartbeat
+within 120 seconds. Polling uses a 25-second Telegram wait and 35-second request
+deadline, permitting transient failures within that bound. Failed polling and
+notification operations retry after three seconds and log only exception types.
 
-Details uses separate bold identity/status, Location, Timeline and Storage blocks.
-It contains title, host, directory, location, creation/request/response/completion
-times and free disk space. Rename and Close live here. Times use
-Europe/Warsaw and their date-specific UTC offset. Navigation leaves work running;
-Stop interrupts it; Close ends the session without deleting project files.
-The bot has no archive browser or reopen action; closed history remains stored.
+## Recovery and independent versioning
 
-## Transport and state
+The component owns its version, changelog, release commit/tag and package
+metadata. Run make check and the Kernel release workflow. Shared activation and
+rollback accept only images reporting notifications-only through --capabilities.
+A failed first cutover stops the bot rather than restoring an interactive image;
+later notification-only revisions retain normal rollback. Independent Core/web
+updates and native execution remain available.
 
-Text and supported images pass unchanged to Core. New messages steer active
-work. The 20 MB Telegram cloud download ceiling is enforced. Agent response parts
-are at most 3200 UTF-16 units, leaving room for the header and notices below the
-4096-unit API limit. Albums use a one-second quiet window and retain their first
-captured target. Chat sends, edits and deletion share a minimum 1.05-second
-interval, following Telegram's private-chat guidance of one message per second
-with a small scheduling margin. This replaces the group-oriented conservative
-3.1-second budget. Telegram retry_after still takes precedence: persist its
-deadline and reject local writes until it expires without making more requests.
-Callback acknowledgements bypass that write budget and duplicate SDK answers
-are suppressed with a bounded 512-ID process cache; acknowledgement is feedback,
-never authorization or proof of successful execution.
+Legacy Core snapshots include the old shared bot.db. The new notifier ledger is
+separate: preserve it with a consistent SQLite backup when backing up this
+component. Losing only this ledger starts a fresh observation baseline without
+executing anything or backfilling historical notifications. Core/native history
+and the owner's existing backup retention remain unchanged.
 
-Polling only durably saves authorized raw updates and advances a monotonic
-offset. A separate ordered navigation consumer resolves each input's session,
-location and input step after preceding controls. Targets remain immutable during
-media transfer and later navigation. Received updates survive restart. Navigation
-continues during outgoing flood waits; mutations still require any configured
-per-request device proof. Owner/private-chat checks apply before both intake and
-dispatch. Unknown native outcomes retain the existing no-replay contract.
-
-Dialog rendering queues the newest panel snapshot without waiting for Telegram.
-An independent publisher coalesces superseded snapshots and skips identical
-published content; SDK Chat bindings are not visible content. It never holds the
-UI-state lock over network writes or rate-limit waits. Persist only actually
-accepted panel IDs and acknowledge only the captured outbox batch after successful
-publication. An explicit-view receipt belongs to its snapshot and cannot be
-acknowledged by a failed or superseded display. Save real SDK message/media state
-after publication. Reconstruct pending display from durable UI/outbox state on
-restart. Old-panel cleanup is deferred; foreground activity suppresses background
-preview/cleanup for two seconds to prioritize navigation. This is a responsiveness
-policy, not a promise of subsecond Telegram delivery.
-
-Input workers serialize each session/creation intent while processing at most
-four targets concurrently. This bounds transfer/resource concurrency without
-letting one slow recording/image block another session's text. Stop/Archive
-cancel the target's local transfers and queued inputs before calling Core, so
-finishing a transfer cannot start a new turn after Stop. Cancellation runs inside
-the device authorization boundary and retains captured input for normal retention.
-Independent polling, navigation, callback, panel, input and delivery tasks are
-cancelled/reaped on shutdown; bot updates preserve Core/native session identity.
-Service replies, including /auth and error messages, use a durable independent
-queue as well; no service handler waits for Telegram while holding UI state.
-Known successful replies are not repeated and local copies expire after seven days.
-Startup output and readiness remain independent of outgoing cooldowns.
-
-Tests with the production queue and pacing verify slow-HTTP isolation, callback
-acknowledgement, switch-then-send ordering, latest-panel coalescing, no-op refresh,
-failed-publication receipts/outbox, flood waits, cross-session transfer concurrency
-and Stop during transfer. Existing functional UI tests explicitly inline the
-publisher to inspect formatting/state deterministically; they are not latency
-benchmarks. Details and measured acceptance are in docs/responsiveness.md.
-
-The frontend owns bot.db: captured input, UI state, offsets and output refresh
-requests. Input targets are captured before downloads/navigation. Button navigation and streaming edit the current panel. A new owner message
-moves the panel below that input by sending the replacement first and retiring
-the previous bot panel. Telegram edits cannot change message order. Preserve
-owner messages in Telegram and the locally retained seven-day history. Track the latest input and
-unfinished retirement durably, including across upgrades. A failed replacement
-send preserves the old panel; failed cleanup never repeats the successful send.
-Startup refreshes the saved view and repairs a panel stranded above newer input. Native questions and free-text
-answers remain associated with their originating session. Errors retain
-navigation exits. An unavailable panel can be replaced without replaying input.
-
-
-## Complete long-answer delivery
-
-When a current answer exceeds the compact preview, publish its complete native
-final messages as ordered standalone Telegram messages, splitting rendered HTML
-at 3500 visible UTF-16 units and repeating the session/part heading. This leaves
-room below the 4096-unit Telegram limit. Preserve every text character and valid
-formatting; do not summarize or require the owner to use history for the rest.
-Short answers retain the existing single-panel presentation. Published answer
-messages have no controls and are never retired as UI panels. After full delivery,
-remove the duplicate compact preview and keep the session controls in
-the working panel below the answer. Keep errors and pending questions visible.
-
-Queue and acknowledge each part durably by view visit, event ID and part number.
-Only the final messages belonging to the current answer in the selected session
-are eligible for delivery. Refresh that selection before draining after startup.
-Never drain an old session/answer tail globally, restore cancelled history on
-startup, or publish older answers after a newer result. Journal opens the current
-answer; previous iterations are available only through History's pages and
-iteration jumps.
-
-Navigating away pauses an incomplete answer without losing its source or
-accepted parts. Reopening that same current answer resumes its own batch without
-repeating its accepted prefix. A newer answer supersedes the old delivery; its
-unfinished parts stay local and must not appear below the new answer. Starting a
-new view must resolve the current answer before adopting an unfinished batch,
-matching both session and event ID. A fully delivered current answer can be
-replayed on explicit session selection. Config/history preserve the visit but
-history reading never drains the multi-message delivery queue. Publish the boot
-notice before enabling answer delivery so it cannot split an answer's parts.
-
-Only the selected main session dialog starts new full-answer delivery batches. Background
-sessions retain short completion notices and publish full answers when opened;
-history remains a role-aware book. Answer parts are silent and disable previews.
-Keep the panel below each accepted part, including partial-delivery failure.
-Sending an answer automatically does not acknowledge a result. An explicit open
-captures its completion receipt and acknowledges it only after all requested
-parts reach Telegram; a newer completion must remain unread. Local queued/sent
-answer copies expire after seven days from the original event, like other local
-message content. Do not backfill expired answers or change native identities.
-
-## Deployment boundary
-
-This is one of two containers in the Remote Vibecoding Compose project.
-Production code talks only to the versioned Core API, never imports Core code.
-Integration tests use the sibling Core checkout; runtime packaging does not.
-Restarting/updating this container must not restart Core or native agent work.
-The accepted bot is @GardenSandbox_bot, displayed as Telegram Vibecoding.
-Voice recordings are downloaded privately and queued to Core for local speech
-recognition. Display the exact transcript as user input. One recording is limited
-to five minutes and 20 MB; stable downloads and captured targets survive retries.
-Video is out of scope.
-Additional hosts remain deferred. No subagents.
-
-## Independent versioning
-
-This component owns its semantic version, changelog, release commit and annotated
-vMAJOR.MINOR.PATCH tag. The sibling version and deployment revision do not change
-when this repository is released. API protocol compatibility is separate from
-product versions. Follow the local Kernel release contract through make release
-and make release-push. Source package version, built metadata, CLI and runtime
-version reports must agree.
-
-## Active work display
-
-The one-panel positioning rule applies to every owner message and command,
-including plain menu input, attachments, input steps and Stop without a session.
-Unknown bot commands stay in the interface instead of reaching an agent; absolute
-directory input remains valid. Accepted agent input refreshes the panel promptly.
-
-While a turn is active, animate a compact working indicator with elapsed time
-and the configured reasoning effort. Never invent remaining time. Show only
-public native summaries and code-free progress prose, separated chronologically
-above the finished answer. Hide command/tool output, diffs and code blocks from
-progress. Do not display raw reasoning. Final answers and original user prompts
-remain intact. Completed summaries stay browsable in the paginated history.
-
-Session lists show at most eight entries per page, with four numbered buttons
-per row (two full rows for eight sessions). This phone layout bounds menu length
-and keeps controls usable; locations use the same picker. Paired page arrows
-clamp at the first/last page. Every session list, including Journal and Edit,
-sorts by Core last_interaction descending with stable ID tie-breaking. Core
-owns interaction semantics; explicit viewing does not reorder sessions.
-
-Lists distinguish Connecting, Transcribing, Working/live activity, queued input,
-questions waiting for the owner, finished unread results waiting for the owner,
-Read/Idle, Failed, Interrupted and Uncertain. Unknown statuses remain visible.
-Pending questions take precedence over active-turn markers, including native
-user-input, asynchronous agentMessage questions and MCP elicitation contracts.
-Async questions use the same option/free-text controls and Waiting display as
-synchronous user input; Core owns their distinct native delivery mechanism. Result read state uses the durable
-completion cursor independently of execution state. Relative ages use italic
-parenthesized approximate notation, e.g. (~1h); elapsed active time follows the
-same notation. Absolute detail/restart timestamps retain their Warsaw zone.
-
-## Agent Markdown display
-
-Parse native answer Markdown for display using a real parser, then emit only
-Telegram-supported HTML formatting. Preserve original events and user input.
-Bold, italic, strikethrough, headings, links, lists, quotes and code are readable;
-raw HTML is literal text. Tables become readable rows for narrow phone screens,
-preserving headers and cell contents. Do not rewrite the agent prompt to enforce
-an output format. The live compact preview keeps its existing code filtering; history preserves
-the full published progress and reasoning summaries.
-
-The compact answer preview uses its existing 3200-unit budget. History packs
-role blocks using the iteration budgets above. Mixed/export views use bold author/type labels: 👤 You, 🤖 Codex · Answer,
-💬 Codex · Progress, 🧠 Codex · Reasoning, or a labeled question/system outcome.
-Quote the original user input; use a visible divider only between distinct
-blocks sharing a page. Reopen formatting on every page, including quotes/code.
-Role labels and counters are display metadata; retain all original text and
-native events unchanged. Long user input and long replies are both browsable. Escape session names, paths, errors, typed
-prompts and transcripts. All menus retain their normal buttons; formatting never
-changes callbacks, session identity or original history. Disable link previews
-to keep the single panel compact. Older answers are formatted when reopened.
-
-## Session journal, read state and restart notices
-
-Main Deck shows running/waiting counts and an always-visible Journal button with
-the number of non-closed sessions having a finished outcome not explicitly
-viewed by the owner. Journal is the general session switcher across locations,
-including active, question-waiting, finished, read and unread sessions. Opening a
-result changes its read label but does not remove it from Journal. Busy sessions
-are excluded only from the unread finished-result count until they finish.
-Failures and interruptions can also require attention.
-
-An outcome becomes viewed only after an owner navigation opens its latest chat
-page, or history navigation reaches that page, and Telegram successfully accepts the
-panel. Opening Journal/Config/Details, browsing older history and background
-updates never acknowledge it. Telegram supplies no user read receipts to this
-bot. Per-session completion cursors persist in bot.db, advance monotonically and
-acknowledge only the displayed event; a later completion stays unread. On first
-upgrade retained unacknowledged results are visible rather than silently read.
-
-Every process boot sends the owner one standalone online notification with
-bot/Core versions, host and Warsaw time. Request Telegram notification delivery
-explicitly (disable_notification=False); the owner's chat/device settings still
-control sound and push delivery. Keep this message outside the replaceable UI
-panel, with no navigation buttons. Later input, streaming and panel cleanup must
-not edit or delete it. Persist the accepted message ID/text and boot cursor
-before refreshing the UI, so panel failures and retries do not resend a known
-successful notification. A failed send leaves the cursor pending. A new boot
-gets a new notification; no historical notification backfill is sent.
-
-Refresh the selected view after notification delivery and retain the single
-working panel, owner messages, explicit-view cursors and all native execution.
-Restarting the interface does not mark results viewed. Tests cover retained
-notifications after navigation, repeated startup, failed sends and panel failure
-after a successful notification.
-
-## Telegram intake and liveness
-
-Persist only fields actually received in incoming SDK updates, recursively using
-exclude_unset. Missing LinkPreviewOptions fields contain SDK Default sentinels,
-which are not Telegram JSON and must never enter durable input. Button callbacks
-and replies to bot panels carry these options. Intake preserves supplied media,
-aliases, session targets and unknown JSON fields; it never drops an update to
-escape a serialization failure. An expired callback acknowledgement returns to
-usable navigation and finishes that control, without blocking later commands.
-
-Readiness requires the current boot/PID and a successful polling/intake heartbeat
-no older than 120 seconds. Long polling is 25 seconds with a 35-second request
-deadline, so the bound tolerates several transient retries while exposing a
-stalled consumer. Advance the heartbeat after durable acceptance/control handling,
-not before the potentially failing serialization. A live process alone is not a
-healthy interactive bot. Tests cover typed callbacks/replies with preview options,
-subsequent commands, expired acknowledgements and stale polling health.
-
-## Completion notices and image delivery
-
-A background terminal event sends a short standalone owner notification containing location,
-session name and outcome (finished, failed, interrupted or the native terminal
-status). A durable event-keyed delivery record prevents resending a known success
-on restart; failed sends remain pending. Suppress completion notices when the
-owner has that session open in its chat or history screen. Persist suppression
-at event capture and recheck immediately before sending, including after retries
-and throttling; leaving the session later must not resurrect a suppressed notice.
-A remembered selection on Main Deck, menus, or a different open session does not
-suppress background notices. Image-original delivery remains independent.
-Suppression does not acknowledge the result or skip normal panel updates.
-Notifications never mark a result read
-or replace the working panel. Ignore historical events predating the feature's
-first activation. Session lists retain their explicit-view unread count.
-
-The Core attachment contract copies explicitly selected PNG/JPEG/WebP files into
-private uploads, scoped to session and user-request anchor. Original delivery
-remains durable; browsing shows each image directly in its matching history
-page. There is no persistent Images button or separate gallery in session chat.
-Navigation retires only the working panel/media, never original owner messages,
-standalone file deliveries or completion notices. Producers register selected
-images through the Core API; the frontend does not import Core code.
-
-Completion notices show location, session, outcome and elapsed work time in
-italic approximate parentheses. Derive elapsed time from the first retained user
-input after that session's previous terminal event to this terminal event;
-steering does not reset it. This includes preprocessing and waiting for input.
-Missing historical evidence is explicitly unavailable, never session age or a
-fabricated duration. Every notice has one Open session button targeting its
-captured session, independent of the active project/menu. Merely delivering it
-never marks results read.
-
-Persist the highest accepted standalone notice/file message ID as a panel floor.
-After delivery, refresh the active panel below that floor; subsequent navigation
-and interactions keep the panel at the chat tail. Telegram edits cannot reorder
-messages: send the replacement first, persist it, then retire the old working
-panel. Keep notices and read cursors intact across UI retries and restarts.
-
-## Seven-day local retention
-
-The owner requested bounded VPS storage: local message content, transcripts,
-received media and registered image originals expire 604800 seconds (seven
-24-hour days) after saving, independent of reads. Both processes check every
-900 seconds (15 minutes); cleanup also runs at bot startup. All bot-owned files
-live under the configured data_dir/uploads, with message records in bot.db and
-Core's engine.db in that same state root. Do not add permanent cleanup services.
-Core owns event/request content and registered attachment files; the bot owns
-its input/output copies and intake/orphan files. Migrate legacy output timestamps
-from Core events rather than restarting their seven-day clock. Missing expired
-anchors are safe and IDs/cursors never move backwards.
-
-Keep pending input and active/question-waiting session files until work resolves,
-then expire overdue content at the next check. Scrub completed inbox payloads,
-remove expired output/notices, compact SQLite and retain only small identity/read
-cursors needed to prevent duplicate execution and unread-state regressions.
-This is local bot storage retention: Telegram cloud messages, native Codex
-context/history, repositories, credentials, speech model cache and existing
-backup retention have their own owners. Do not delete them through this janitor.
-Tests protect the exact cutoff, reads not extending lifetime, pending/active
-work, legacy timestamps, outside paths/symlinks and original input preservation
-inside the retention window.
+Source map: notifier.py owns live Telegram behavior; client.py owns its read-only
+API boundary; config.py owns private settings; cli.py owns entrypoint/readiness;
+store.py owns SQLite support; Core owns shared Compose/deployment. Other UI,
+book, confirmation and formatting modules support legacy recovery/tests and are
+not imported by the production notifier entrypoint. Work personally; no subagents.
