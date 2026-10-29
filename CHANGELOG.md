@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.28] - 2026-10-29
+
 - Replace the production Telegram entrypoint with a notification-only runtime.
   Reject executable intake, media downloads, lifecycle/settings/question actions
   and all legacy callbacks; permit only read-only owner activity/statistics.
