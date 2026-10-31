@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Add GitHub-hosted checks and wheel builds with a pinned public Core integration fixture.
+
 ## [0.1.28] - 2026-10-29
 
 - Replace the production Telegram entrypoint with a notification-only runtime.

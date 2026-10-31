@@ -1,0 +1,36 @@
+name: Check
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          path: telegram-vibecoding
+      - name: Checkout pinned public Core test fixture
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: RoTorEx/vibecoding-core
+          ref: 2ca675857c57c39f72bbea2c58ca634469c8d20b
+          path: vibecoding-core
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: '0.13.4'
+          enable-cache: false
+      - name: Check without Telegram or native agent credentials
+        working-directory: telegram-vibecoding
+        run: make check
+      - name: Build notifier wheel
+        working-directory: telegram-vibecoding
+        run: uv build --wheel --out-dir "$RUNNER_TEMP/notifier-dist"

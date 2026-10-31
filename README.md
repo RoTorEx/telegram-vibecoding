@@ -36,3 +36,7 @@ Run make release interactively, enter the exact version, then make release-push.
 Versions, changelog and annotated tags are independent of Core/web. --capabilities
 reports notifications-only without requiring credentials. See [BUSINESS.md](BUSINESS.md)
 for the security boundary, statistics definitions, retention and recovery.
+
+## Continuous integration
+
+This repository stays public. GitHub-hosted Ubuntu runs `make check` and builds a wheel on pushes, pull requests and manual dispatch. The existing integration tests consume a sibling Core checkout pinned to `2ca675857c57c39f72bbea2c58ca634469c8d20b`; update that fixture deliberately when its contract changes. Tests receive no Telegram token, production API socket, SSH key or native agent credentials. CI does not start a live bot or deploy.
